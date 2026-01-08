@@ -108,7 +108,9 @@ def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list
     return results
 
 
-def _parse_article(tree: Element, ref: list[str] | None = None, context: ParseContext | None = None) -> list[ParseResult]:
+def _parse_article(
+    tree: Element, ref: list[str] | None = None, context: ParseContext | None = None
+) -> list[ParseResult]:
     """Recursively parse an article/document tree.
 
     Examples
@@ -185,9 +187,9 @@ def parse_html(html: str) -> pd.DataFrame:
 
     # Filter to only text items (matching original behavior)
     if "type" in df.columns:
-        df = df[df["type"] == "text"]
+        df = df[df["type"] == "text"].copy()
 
-    return df
+    return df  # type: ignore[return-value]
 
 
 def parse_article_paragraphs(article: str) -> dict[str | None, str]:
@@ -328,41 +330,57 @@ def process_paragraphs(paragraphs: list[dict]) -> pd.DataFrame:
     >>> process_paragraphs([{'celex_id': '1', 'paragraph': 'Done at 2021-11-25.'}]).to_dict(orient='records')
     []
     """
-    df = pd.DataFrame.from_records(paragraphs)
+    df: pd.DataFrame = pd.DataFrame.from_records(paragraphs)
 
     if "paragraph" not in df.columns or len(df) == 0:
         return df
 
+    para_col: pd.Series[str] = df["paragraph"]  # type: ignore[assignment]
+
     # Filter patterns to exclude
-    exclusion_patterns = [
-        (lambda s: s.str.startswith("Done at")),
-        (lambda s: s.str.startswith("It shall apply from")),
-        (lambda s: s.str.contains("is replaced by")),
-        (lambda s: s.str.endswith("is updated.")),
-        (lambda s: s.str.endswith("is deleted.")),
-        (lambda s: s.str.endswith("is removed.")),
-        (lambda s: s.str.endswith("is hereby repealed.")),
-        (lambda s: s.str.endswith("are updated.")),
-        (lambda s: s.str.endswith("are deleted.")),
-        (lambda s: s.str.endswith("are removed.")),
-        (lambda s: s.str.contains("is amended ")),
-        (lambda s: s.str.contains("is repealed with")),
-        (lambda s: s.str.contains("'")),
-        (lambda s: s.str.contains("'")),
+    exclusion_starts = ["Done at", "It shall apply from"]
+    exclusion_contains = ["is replaced by", "is amended ", "is repealed with", "'", "'"]
+    exclusion_ends = [
+        "is updated.",
+        "is deleted.",
+        "is removed.",
+        "is hereby repealed.",
+        "are updated.",
+        "are deleted.",
+        "are removed.",
     ]
 
-    for pattern in exclusion_patterns:
+    for pattern in exclusion_starts:
         if len(df) > 0:
-            df = df[~pattern(df.paragraph)]
+            mask = para_col.str.startswith(pattern)
+            df = df[~mask].copy()  # type: ignore[assignment]
+            para_col = df["paragraph"]  # type: ignore[assignment]
+
+    for pattern in exclusion_contains:
+        if len(df) > 0:
+            mask = para_col.str.contains(pattern, regex=False)
+            df = df[~mask].copy()  # type: ignore[assignment]
+            para_col = df["paragraph"]  # type: ignore[assignment]
+
+    for pattern in exclusion_ends:
+        if len(df) > 0:
+            mask = para_col.str.endswith(pattern)
+            df = df[~mask].copy()  # type: ignore[assignment]
+            para_col = df["paragraph"]  # type: ignore[assignment]
 
     # Inclusion filters
     if len(df) > 0:
-        df = df[df.paragraph.str.endswith(".")]
+        mask = para_col.str.endswith(".")
+        df = df[mask].copy()  # type: ignore[assignment]
+        para_col = df["paragraph"]  # type: ignore[assignment]
     if len(df) > 0:
-        df = df[df.paragraph.apply(lambda t: len(t) > 0 and t[0].isupper())]
+        mask = para_col.apply(lambda t: len(t) > 0 and t[0].isupper())
+        df = df[mask].copy()  # type: ignore[assignment]
+        para_col = df["paragraph"]  # type: ignore[assignment]
     if len(df) > 0:
-        df = df[df.paragraph.apply(len) >= 100]
+        mask = para_col.str.len() >= 100
+        df = df[mask].copy()  # type: ignore[assignment]
     if len(df) > 0:
-        df = df.drop_duplicates("paragraph")
+        df = df.drop_duplicates(subset="paragraph")
 
     return df

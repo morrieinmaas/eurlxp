@@ -20,10 +20,10 @@ from eurlxp.client import (
     simplify_iri,
 )
 from eurlxp.models import (
+    EURLEX_PREFIXES,
     DocumentInfo,
     DocumentMetadata,
     DocumentType,
-    EURLEX_PREFIXES,
     ParseContext,
     ParsedItem,
     ParseResult,
