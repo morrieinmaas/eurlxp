@@ -33,6 +33,40 @@ uv add eurlxp
 pip install eurlxp[sparql]
 ```
 
+## How It Works
+
+This package fetches EU legal documents from EUR-Lex using their public HTML endpoints:
+
+```text
+https://eur-lex.europa.eu/legal-content/{LANG}/TXT/HTML/?uri=CELEX:{CELEX_ID}
+```
+
+You can verify this manually with curl:
+
+```bash
+# Fetch a regulation (EU Drone Regulation 2019/947)
+curl -s "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947" | head -50
+
+# Or with a different language (German)
+curl -s "https://eur-lex.europa.eu/legal-content/DE/TXT/HTML/?uri=CELEX:32019R0947" | head -50
+```
+
+The equivalent using this package's CLI:
+
+```bash
+# Fetch as HTML
+uvx eurlxp fetch 32019R0947 --format html | head -50
+
+# Fetch and parse to JSON
+uvx eurlxp fetch 32019R0947 --format json | head -30
+
+# Fetch and parse to CSV
+uvx eurlxp fetch 32019R0947 --format csv | head -10
+
+# Get document info (shows row count, articles, etc.)
+uvx eurlxp info 32019R0947
+```
+
 ## Quick Start
 
 ```python
