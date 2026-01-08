@@ -43,7 +43,7 @@ def run_query(query: str) -> dict:
     _check_sparql_dependencies()
     from SPARQLWrapper import JSON, SPARQLWrapper
 
-    sparql = SPARQLWrapper("http://publications.europa.eu/webapi/rdf/sparql")
+    sparql = SPARQLWrapper("https://publications.europa.eu/webapi/rdf/sparql")
     sparql.setQuery(query)
     sparql.setReturnFormat(JSON)
     results = sparql.query().convert()
