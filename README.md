@@ -29,9 +29,13 @@ pip install eurlxp
 # Using uv
 uv add eurlxp
 
-# With SPARQL support
+# With SPARQL support (required for get_celex_dataframe, run_query, get_regulations, etc.)
 pip install eurlxp[sparql]
+# or
+uv add eurlxp[sparql]
 ```
+
+> **Note**: SPARQL functions (`get_celex_dataframe`, `run_query`, `get_regulations`, `get_documents`, `guess_celex_ids_via_eurlex`) require the optional `sparql` dependencies. If you see `ImportError: SPARQL dependencies not installed`, install with `pip install eurlxp[sparql]`.
 
 ## How It Works
 
