@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-01-08
+
+### Added
+
+- `run_query()` - Execute SPARQL queries on EUR-Lex
+- `convert_sparql_output_to_dataframe()` - Convert SPARQL results to DataFrame
+- `get_celex_dataframe()` - Get CELEX data as RDF graph DataFrame
+- `guess_celex_ids_via_eurlex()` - Lookup CELEX IDs via EUR-Lex SPARQL
+- `get_regulations()` - Retrieve list of regulation CELLAR IDs
+- `get_documents()` - Retrieve documents by type with metadata
+- Full API parity with original eurlex package
+
+### Changed
+
+- SPARQL functions require optional `eurlxp[sparql]` dependencies
+
 ## [0.1.0] - 2025-01-08
 
 ### Added
