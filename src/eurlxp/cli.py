@@ -122,7 +122,7 @@ def info(
 
     if "article" in df.columns:
         article_col = df["article"]
-        unique_articles = article_col[article_col.notna()].nunique()
+        unique_articles: int = article_col[article_col.notna()].nunique()  # type: ignore[assignment]
         table.add_row("Unique articles", str(unique_articles))
 
     if "document" in df.columns:
