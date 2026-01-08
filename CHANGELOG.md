@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-01-08
+
+### Fixed
+
+- CLI now shows help by default when no command is provided
+
 ## [0.2.1] - 2025-01-08
 
 ### Changed
