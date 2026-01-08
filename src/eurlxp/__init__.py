@@ -11,6 +11,8 @@ Examples
 True
 """
 
+from importlib.metadata import version
+
 from eurlxp.client import (
     AsyncEURLexClient,
     EURLexClient,
@@ -45,7 +47,7 @@ from eurlxp.sparql import (
     run_query,
 )
 
-__version__ = "0.2.0"
+__version__ = version("eurlxp")
 __all__ = [
     # Version
     "__version__",

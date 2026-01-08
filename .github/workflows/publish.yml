@@ -1,20 +1,21 @@
 name: Publish to PyPI
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   release:
     types: [published]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to publish (leave empty to use pyproject.toml version)'
-        required: false
-        type: string
 
 jobs:
   check-version:
     runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'release' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
       version: ${{ steps.check.outputs.version }}
@@ -27,11 +28,30 @@ jobs:
           VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d'"' -f2)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
+      - name: Check if version is in CHANGELOG
+        id: check_changelog
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          if grep -q "## \[$VERSION\]" CHANGELOG.md; then
+            echo "Version $VERSION found in CHANGELOG.md"
+            echo "in_changelog=true" >> $GITHUB_OUTPUT
+          else
+            echo "Version $VERSION NOT found in CHANGELOG.md, skipping publish"
+            echo "in_changelog=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Check if version exists on PyPI
         id: check
         run: |
           VERSION="${{ steps.get_version.outputs.version }}"
+          IN_CHANGELOG="${{ steps.check_changelog.outputs.in_changelog }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          
+          if [ "$IN_CHANGELOG" != "true" ]; then
+            echo "Version not in CHANGELOG, skipping publish"
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
           
           # Check if version exists on PyPI
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://pypi.org/pypi/eurlxp/$VERSION/json")
