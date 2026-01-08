@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-01-08
+
+### Changed
+
+- Publish workflow now requires CI to pass before publishing
+- Publish workflow checks CHANGELOG for version entry before publishing
+
 ## [0.2.0] - 2025-01-08
 
 ### Added
