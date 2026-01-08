@@ -7,9 +7,11 @@ import httpx
 from eurlxp.models import EURLEX_PREFIXES
 
 # Base URLs for EUR-Lex resources
-EURLEX_CELEX_URL = "http://publications.europa.eu/resource/celex/"
-EURLEX_CELLAR_URL = "http://publications.europa.eu/resource/cellar/"
-EURLEX_SPARQL_URL = "http://publications.europa.eu/webapi/rdf/sparql"
+# Note: The old publications.europa.eu/resource/ endpoints return 400 errors as of 2024
+# Using the direct EUR-Lex HTML endpoints instead
+EURLEX_HTML_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELEX:{celex_id}"
+EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELLAR:{cellar_id}"
+EURLEX_SPARQL_URL = "https://publications.europa.eu/webapi/rdf/sparql"
 
 # Default headers for HTML requests
 DEFAULT_HEADERS = {
@@ -76,9 +78,9 @@ class EURLexClient:
         >>> len(html) > 0
         True
         """
-        url = f"{EURLEX_CELEX_URL}{celex_id}"
-        headers = {**self._headers, "Accept-Language": language}
-        response = self._get_client().get(url, headers=headers)
+        lang_code = language.upper()
+        url = EURLEX_HTML_URL.format(lang=lang_code, celex_id=celex_id)
+        response = self._get_client().get(url)
         response.raise_for_status()
         return response.text
 
@@ -98,9 +100,9 @@ class EURLexClient:
             The HTML content of the document.
         """
         clean_id = cellar_id.split(":")[1] if ":" in cellar_id else cellar_id
-        url = f"{EURLEX_CELLAR_URL}{clean_id}"
-        headers = {**self._headers, "Accept-Language": language}
-        response = self._get_client().get(url, headers=headers)
+        lang_code = language.upper()
+        url = EURLEX_CELLAR_URL.format(lang=lang_code, cellar_id=clean_id)
+        response = self._get_client().get(url)
         response.raise_for_status()
         return response.text
 
@@ -153,10 +155,10 @@ class AsyncEURLexClient:
         str
             The HTML content of the document.
         """
-        url = f"{EURLEX_CELEX_URL}{celex_id}"
-        headers = {**self._headers, "Accept-Language": language}
+        lang_code = language.upper()
+        url = EURLEX_HTML_URL.format(lang=lang_code, celex_id=celex_id)
         client = await self._get_client()
-        response = await client.get(url, headers=headers)
+        response = await client.get(url)
         response.raise_for_status()
         return response.text
 
@@ -176,10 +178,10 @@ class AsyncEURLexClient:
             The HTML content of the document.
         """
         clean_id = cellar_id.split(":")[1] if ":" in cellar_id else cellar_id
-        url = f"{EURLEX_CELLAR_URL}{clean_id}"
-        headers = {**self._headers, "Accept-Language": language}
+        lang_code = language.upper()
+        url = EURLEX_CELLAR_URL.format(lang=lang_code, cellar_id=clean_id)
         client = await self._get_client()
-        response = await client.get(url, headers=headers)
+        response = await client.get(url)
         response.raise_for_status()
         return response.text
 

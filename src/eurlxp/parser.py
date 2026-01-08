@@ -60,9 +60,14 @@ def _parse_modifiers(element: Element, ref: list[str], context: ParseContext) ->
 def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list[ParseResult]:
     """Parse a <span> or <p> tag based on its class.
 
+    Supports both old EUR-Lex classes (doc-ti, normal, ti-art) and
+    new OJ format classes (oj-doc-ti, oj-normal, oj-ti-art).
+
     Examples
     --------
     >>> _parse_span(ETree.fromstring('<p class="doc-ti">Text</p>'), [], ParseContext())
+    [ParseResult(text='Text', item_type='doc-title', ...)]
+    >>> _parse_span(ETree.fromstring('<p class="oj-doc-ti">Text</p>'), [], ParseContext())
     [ParseResult(text='Text', item_type='doc-title', ...)]
     """
     results: list[ParseResult] = []
@@ -73,29 +78,32 @@ def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list
 
     text = _get_text(element)
 
-    if css_class == "doc-ti":
+    # Normalize class name: strip "oj-" prefix if present for matching
+    normalized_class = css_class[3:] if css_class.startswith("oj-") else css_class
+
+    if normalized_class == "doc-ti":
         if context.document is None:
             context.document = ""
         context.document += text
         results.append(ParseResult(text=text, item_type="doc-title", ref=ref.copy(), context=context.copy()))
 
-    elif css_class == "sti-art":
+    elif normalized_class == "sti-art":
         context.article_subtitle = text
         results.append(ParseResult(text=text, item_type="art-subtitle", ref=ref.copy(), context=context.copy()))
 
-    elif css_class == "ti-art":
+    elif normalized_class == "ti-art":
         context.article = text.replace("Article", "").strip()
         results.append(ParseResult(text=text, item_type="art-title", ref=ref.copy(), context=context.copy()))
 
-    elif css_class.startswith("ti-grseq-"):
+    elif normalized_class.startswith("ti-grseq-"):
         results.append(ParseResult(text=text, item_type="group-title", ref=ref.copy(), context=context.copy()))
         context.group = text
 
-    elif css_class.startswith("ti-section-"):
+    elif normalized_class.startswith("ti-section-"):
         results.append(ParseResult(text=text, item_type="section-title", ref=ref.copy(), context=context.copy()))
         context.section = text
 
-    elif css_class == "normal":
+    elif normalized_class == "normal":
         match = re.match(r"^([0-9]+)[.]", text)
         if match:
             context.paragraph = text.split(".")[0]
@@ -175,12 +183,14 @@ def parse_html(html: str) -> pd.DataFrame:
     >>> parse_html('<html').to_dict(orient='records')
     []
     """
+    # Try ElementTree first (for valid XHTML)
     try:
         tree = ETree.fromstring(html)
+        results = _parse_article(tree)
     except ETree.ParseError:
-        return pd.DataFrame()
+        # Fall back to BeautifulSoup for malformed HTML (new EUR-Lex format)
+        results = _parse_html_with_beautifulsoup(html)
 
-    results = _parse_article(tree)
     records = [r.to_dict() for r in results]
 
     df = pd.DataFrame.from_records(records) if records else pd.DataFrame()
@@ -190,6 +200,50 @@ def parse_html(html: str) -> pd.DataFrame:
         df = df[df["type"] == "text"].copy()
 
     return df  # type: ignore[return-value]
+
+
+def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
+    """Parse HTML/XML using BeautifulSoup with lxml-xml parser.
+
+    This is used as a fallback when ElementTree fails to parse the HTML.
+    The new EUR-Lex format is XHTML, so we parse it as XML.
+    """
+    from bs4 import BeautifulSoup
+
+    # Use lxml-xml parser for proper XML/XHTML parsing
+    soup = BeautifulSoup(html, "lxml-xml")
+    results: list[ParseResult] = []
+    context = ParseContext()
+
+    # Find document title
+    for doc_ti in soup.find_all("p", class_=["doc-ti", "oj-doc-ti"]):
+        text = doc_ti.get_text(strip=True)
+        if text:
+            if context.document is None:
+                context.document = ""
+            context.document += text
+            results.append(ParseResult(text=text, item_type="doc-title", ref=[], context=context.copy()))
+
+    # Find article titles
+    for ti_art in soup.find_all("p", class_=["ti-art", "oj-ti-art"]):
+        text = ti_art.get_text(strip=True)
+        if text:
+            context.article = text.replace("Article", "").strip()
+            results.append(ParseResult(text=text, item_type="art-title", ref=[], context=context.copy()))
+
+    # Find normal text paragraphs
+    for normal in soup.find_all("p", class_=["normal", "oj-normal"]):
+        text = normal.get_text(strip=True)
+        if text:
+            # Check for numbered paragraphs
+            match = re.match(r"^[(]?([0-9]+)[).]?", text)
+            if match:
+                context.paragraph = match.group(1)
+                # Remove the number prefix
+                text = re.sub(r"^[(]?[0-9]+[).]?\s*", "", text)
+            results.append(ParseResult(text=text, item_type="text", ref=[], context=context.copy()))
+
+    return results
 
 
 def parse_article_paragraphs(article: str) -> dict[str | None, str]:
