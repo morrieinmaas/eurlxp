@@ -13,6 +13,7 @@ app = typer.Typer(
     name="eurlxp",
     help="EUR-Lex document parser - fetch and parse EU legal documents.",
     add_completion=False,
+    no_args_is_help=True,
 )
 console = Console()
 

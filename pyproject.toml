@@ -1,6 +1,6 @@
 [project]
 name = "eurlxp"
-version = "0.2.1"
+version = "0.2.2"
 description = "A modern EUR-Lex parser for Python - fetch and parse EU legal documents"
 readme = "README.md"
 license = { text = "MIT" }
