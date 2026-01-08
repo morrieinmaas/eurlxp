@@ -27,12 +27,15 @@ check:  ## Run all checks (lint + type check)
 	$(PYRIGHT)
 
 test:  ## Run tests (excluding integration)
+	uv sync --all-extras
 	$(PYTEST) -v -m "not integration"
 
 test-integration:  ## Run integration tests
+	uv sync --all-extras
 	$(PYTEST) -v -m integration
 
 test-all:  ## Run all tests
+	uv sync --all-extras
 	$(PYTEST) -v
 
 build:  ## Build the package
