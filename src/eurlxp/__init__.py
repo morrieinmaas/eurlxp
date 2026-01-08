@@ -36,8 +36,16 @@ from eurlxp.parser import (
     parse_html,
     process_paragraphs,
 )
+from eurlxp.sparql import (
+    convert_sparql_output_to_dataframe,
+    get_celex_dataframe,
+    get_documents,
+    get_regulations,
+    guess_celex_ids_via_eurlex,
+    run_query,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     # Version
     "__version__",
@@ -54,6 +62,13 @@ __all__ = [
     "get_celex_id",
     "get_possible_celex_ids",
     "process_paragraphs",
+    # SPARQL
+    "run_query",
+    "convert_sparql_output_to_dataframe",
+    "get_celex_dataframe",
+    "guess_celex_ids_via_eurlex",
+    "get_regulations",
+    "get_documents",
     # Models
     "DocumentType",
     "SectorId",
