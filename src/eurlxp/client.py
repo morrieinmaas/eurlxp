@@ -7,10 +7,13 @@ import httpx
 from eurlxp.models import EURLEX_PREFIXES
 
 # Base URLs for EUR-Lex resources
-# Note: The old publications.europa.eu/resource/ endpoints return 400 errors as of 2024
+# Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors
 # Using the direct EUR-Lex HTML endpoints instead
 EURLEX_HTML_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELEX:{celex_id}"
 EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELLAR:{cellar_id}"
+# Cellar SPARQL endpoint (official, still current)
+# Note: As of Oct 2023, OJ is published act-by-act instead of as collections
+# See: https://op.europa.eu/en/web/cellar/the-official-journal-act-by-act
 EURLEX_SPARQL_URL = "https://publications.europa.eu/webapi/rdf/sparql"
 
 # Default headers for HTML requests
