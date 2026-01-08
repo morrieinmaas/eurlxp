@@ -1,7 +1,5 @@
 """Tests for the parser module."""
 
-import pytest
-
 from eurlxp.parser import (
     get_celex_id,
     get_possible_celex_ids,

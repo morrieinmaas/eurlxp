@@ -1,8 +1,8 @@
 """Tests for the models module."""
 
 from eurlxp.models import (
-    DocumentType,
     EURLEX_PREFIXES,
+    DocumentType,
     ParseContext,
     ParseResult,
     SectorId,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -20,7 +20,7 @@ console = Console()
 @app.command()
 def fetch(
     celex_id: Annotated[str, typer.Argument(help="CELEX ID of the document (e.g., 32019R0947)")],
-    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output file path")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file path")] = None,
     language: Annotated[str, typer.Option("--language", "-l", help="Language code")] = "en",
     format: Annotated[str, typer.Option("--format", "-f", help="Output format: html, csv, json")] = "html",
 ) -> None:
@@ -33,8 +33,9 @@ def fetch(
             html = get_html_by_celex_id(celex_id, language)
         except Exception as e:
             console.print(f"[red]Error fetching document: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
+    content: str
     if format == "html":
         content = html
     elif format in ("csv", "json"):
@@ -43,7 +44,9 @@ def fetch(
             console.print("[yellow]Warning: No content parsed from document[/yellow]")
             content = "" if format == "csv" else "[]"
         else:
-            content = df.to_csv(index=False) if format == "csv" else df.to_json(orient="records", indent=2)
+            csv_content = df.to_csv(index=False)
+            json_content = df.to_json(orient="records", indent=2)
+            content = csv_content if format == "csv" else (json_content or "[]")
     else:
         console.print(f"[red]Unknown format: {format}[/red]")
         raise typer.Exit(1)
@@ -58,7 +61,7 @@ def fetch(
 @app.command()
 def parse(
     input_file: Annotated[Path, typer.Argument(help="Input HTML file to parse")],
-    output: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output file path")] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file path")] = None,
     format: Annotated[str, typer.Option("--format", "-f", help="Output format: csv, json")] = "csv",
 ) -> None:
     """Parse a local EUR-Lex HTML file."""
@@ -75,10 +78,11 @@ def parse(
         console.print("[yellow]Warning: No content parsed from document[/yellow]")
         raise typer.Exit(0)
 
+    content: str
     if format == "csv":
-        content = df.to_csv(index=False)
+        content = df.to_csv(index=False) or ""
     elif format == "json":
-        content = df.to_json(orient="records", indent=2)
+        content = df.to_json(orient="records", indent=2) or "[]"
     else:
         console.print(f"[red]Unknown format: {format}[/red]")
         raise typer.Exit(1)
@@ -104,7 +108,7 @@ def info(
             html = get_html_by_celex_id(celex_id, language)
         except Exception as e:
             console.print(f"[red]Error fetching document: {e}[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     df = parse_html(html)
 
@@ -117,12 +121,15 @@ def info(
     table.add_row("Total rows", str(len(df)))
 
     if "article" in df.columns:
-        unique_articles = df[df["article"].notna()]["article"].nunique()
+        article_col = df["article"]
+        unique_articles = article_col[article_col.notna()].nunique()
         table.add_row("Unique articles", str(unique_articles))
 
-    if "document" in df.columns and not df["document"].isna().all():
-        doc_title = df["document"].dropna().iloc[0] if len(df["document"].dropna()) > 0 else "N/A"
-        table.add_row("Document title", str(doc_title)[:80])
+    if "document" in df.columns:
+        doc_col = df["document"].dropna()
+        if len(doc_col) > 0:
+            doc_title = str(doc_col.iloc[0])[:80]
+            table.add_row("Document title", doc_title)
 
     console.print(table)
 
@@ -141,7 +148,7 @@ def celex(
         console.print(f"[green]{celex_id}[/green]")
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @app.command()

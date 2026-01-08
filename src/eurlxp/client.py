@@ -305,5 +305,5 @@ def simplify_iri(iri: str) -> str:
     """
     for prefix, url in EURLEX_PREFIXES.items():
         if iri.startswith(url):
-            return f"{prefix}:{iri[len(url):]}"
+            return f"{prefix}:{iri[len(url) :]}"
     return iri
