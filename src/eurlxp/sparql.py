@@ -2,16 +2,40 @@
 
 This module requires the optional `sparql` dependencies:
     pip install eurlxp[sparql]
+
+The SPARQL endpoint (https://publications.europa.eu/webapi/rdf/sparql) is the recommended
+way to query EUR-Lex data as it doesn't trigger bot detection like HTML scraping does.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
+
+# Default retry configuration
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 2.0  # seconds
+DEFAULT_RETRY_BACKOFF = 2.0  # exponential backoff multiplier
+
+
+class SPARQLServiceError(Exception):
+    """Raised when the SPARQL endpoint returns a service error (e.g., 503).
+
+    This typically indicates the server is temporarily overloaded.
+    The library will automatically retry with exponential backoff.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _check_sparql_dependencies() -> None:
@@ -23,31 +47,81 @@ def _check_sparql_dependencies() -> None:
         raise ImportError("SPARQL dependencies not installed. Install with: pip install eurlxp[sparql]") from e
 
 
-def run_query(query: str) -> dict:
-    """Run a SPARQL query on EUR-Lex.
+def run_query(
+    query: str,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    retry_delay: float = DEFAULT_RETRY_DELAY,
+    retry_backoff: float = DEFAULT_RETRY_BACKOFF,
+) -> dict:
+    """Run a SPARQL query on EUR-Lex with automatic retry on failure.
 
     Parameters
     ----------
     query : str
         The SPARQL query to run.
+    max_retries : int
+        Maximum number of retry attempts (default: 3).
+    retry_delay : float
+        Initial delay between retries in seconds (default: 2.0).
+    retry_backoff : float
+        Exponential backoff multiplier (default: 2.0).
 
     Returns
     -------
     dict
         A dictionary containing the results.
 
+    Raises
+    ------
+    SPARQLServiceError
+        If the query fails after all retries.
+
     Examples
     --------
     >>> results = run_query("SELECT ?s WHERE { ?s ?p ?o } LIMIT 1")  # doctest: +SKIP
+    >>> results = run_query(query, max_retries=5, retry_delay=3.0)  # More retries
     """
     _check_sparql_dependencies()
+    from urllib.error import HTTPError
+
     from SPARQLWrapper import JSON, SPARQLWrapper
+    from SPARQLWrapper.SPARQLExceptions import EndPointInternalError, EndPointNotFound, QueryBadFormed
 
     sparql = SPARQLWrapper("https://publications.europa.eu/webapi/rdf/sparql")
     sparql.setQuery(query)
     sparql.setReturnFormat(JSON)
-    results = sparql.query().convert()
-    return dict(results)  # type: ignore[arg-type]
+
+    last_error: Exception | None = None
+    current_delay = retry_delay
+
+    for attempt in range(max_retries + 1):
+        try:
+            results = sparql.query().convert()
+            return dict(results)  # type: ignore[arg-type]
+        except (HTTPError, EndPointInternalError) as e:
+            last_error = e
+            status_code = getattr(e, "code", None) or getattr(e, "status_code", None)
+
+            if attempt < max_retries:
+                logger.warning(
+                    "SPARQL query failed (attempt %d/%d, status=%s): %s. Retrying in %.1fs...",
+                    attempt + 1,
+                    max_retries + 1,
+                    status_code,
+                    str(e)[:100],
+                    current_delay,
+                )
+                time.sleep(current_delay)
+                current_delay *= retry_backoff
+            else:
+                logger.error("SPARQL query failed after %d attempts: %s", max_retries + 1, e)
+        except (QueryBadFormed, EndPointNotFound) as e:
+            raise SPARQLServiceError(f"SPARQL query error: {e}") from e
+
+    raise SPARQLServiceError(
+        f"SPARQL endpoint unavailable after {max_retries + 1} attempts. Last error: {last_error}",
+        status_code=getattr(last_error, "code", None),
+    )
 
 
 def convert_sparql_output_to_dataframe(sparql_results: dict) -> pd.DataFrame:

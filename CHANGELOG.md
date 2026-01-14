@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-01-14
+
+### Added
+
+- **Bot detection handling**: `WAFChallengeError` exception when EUR-Lex returns AWS WAF JavaScript challenges
+- **SPARQL fallback**: `sparql_fallback` option to automatically fall back to SPARQL when WAF blocks HTML scraping
+- **Rate limiting**: `request_delay` parameter for clients to add delays between requests
+- **Client configuration**: `ClientConfig` dataclass for configuring client behavior
+  - `timeout` - Request timeout in seconds
+  - `headers` - Custom headers to merge with defaults
+  - `request_delay` - Delay between requests for rate limiting
+  - `use_browser_headers` - Toggle browser-like vs minimal headers
+  - `referer` - Optional referer header
+  - `raise_on_waf` - Whether to raise exception on WAF challenge
+  - `sparql_fallback` - Automatically fallback to SPARQL on WAF challenge (default: True)
+- **Global config**: `get_default_config()` and `set_default_config()` functions
+- **SPARQL retry logic**: Automatic retry with exponential backoff for 503 errors
+- **SPARQL exception**: `SPARQLServiceError` for handling SPARQL endpoint failures
+- Browser-like default headers to reduce bot detection triggers
+
+### Changed
+
+- `EURLexClient` and `AsyncEURLexClient` now accept `config` parameter for full configuration
+- `run_query()` now accepts `max_retries`, `retry_delay`, and `retry_backoff` parameters
+- Default headers now mimic Chrome browser to avoid AWS WAF detection
+- Improved README with bot detection strategies and SPARQL usage examples
+
+### Fixed
+
+- Better error messages when bot detection is triggered
+- SPARQL queries now retry automatically on temporary 503 errors
+
 ## [0.2.5] - 2025-01-08
 
 ### Changed
