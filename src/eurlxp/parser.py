@@ -233,8 +233,10 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
 
     # Find group titles (ti-grseq-* classes)
     for p_tag in soup.find_all("p"):
-        css_class = p_tag.get("class", [])
-        if isinstance(css_class, list):
+        css_class = p_tag.get("class")
+        if css_class is None:
+            css_class = ""
+        elif isinstance(css_class, list):
             css_class = " ".join(css_class)
         if css_class and ("ti-grseq-" in css_class or "oj-ti-grseq-" in css_class):
             text = p_tag.get_text(strip=True)
@@ -244,8 +246,10 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
 
     # Find section titles (ti-section-* classes)
     for p_tag in soup.find_all("p"):
-        css_class = p_tag.get("class", [])
-        if isinstance(css_class, list):
+        css_class = p_tag.get("class")
+        if css_class is None:
+            css_class = ""
+        elif isinstance(css_class, list):
             css_class = " ".join(css_class)
         if css_class and ("ti-section-" in css_class or "oj-ti-section-" in css_class):
             text = p_tag.get_text(strip=True)
