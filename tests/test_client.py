@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from eurlxp.client import (
-    ClientConfig,
     DEFAULT_REQUEST_DELAY,
     DEFAULT_TIMEOUT,
+    ClientConfig,
     EURLexClient,
     WAFChallengeError,
     _is_waf_challenge,
