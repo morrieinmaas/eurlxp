@@ -1,4 +1,4 @@
-.PHONY: help install dev lint format check test test-integration test-all test-waf test-curl build publish publish-test clean
+.PHONY: help install dev lint format check test test-integration test-unit test-waf test-curl build publish publish-test clean
 
 PYTHON := uv run python
 PYTEST := uv run pytest
@@ -26,17 +26,17 @@ check:  ## Run all checks (lint + type check)
 	$(RUFF) format --check src tests
 	$(PYRIGHT)
 
-test:  ## Run tests (excluding integration)
+test:  ## Run all tests
 	uv sync --all-extras
-	$(PYTEST) -v -m "not integration"
+	$(PYTEST) -v
 
 test-integration:  ## Run integration tests
 	uv sync --all-extras
 	$(PYTEST) -v -m integration
 
-test-all:  ## Run all tests
+test-unit:  ## Run unit tests only (excluding integration)
 	uv sync --all-extras
-	$(PYTEST) -v
+	$(PYTEST) -v -m "not integration"
 
 build:  ## Build the package
 	uv build

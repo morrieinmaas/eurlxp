@@ -41,11 +41,11 @@ def _is_waf_challenge(html: str) -> bool:
     return any(indicator in html for indicator in waf_indicators)
 
 
-def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:  # noqa: ARG001
-    """Fetch document content via SPARQL as fallback when HTML scraping is blocked.
+def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
+    """Fetch document content via SPARQL/RDF as fallback when HTML scraping is blocked.
 
-    This returns a simplified HTML representation built from SPARQL metadata.
-    It won't have the full document structure but provides the core content.
+    This traverses the CELLAR RDF graph to find the XHTML manifestation URL:
+    Work (CELEX) -> Expression (language) -> Manifestation (xhtml)
 
     Parameters
     ----------
@@ -57,54 +57,134 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:  # noqa:
     Returns
     -------
     str
-        HTML content reconstructed from SPARQL data.
+        The actual XHTML content of the document.
 
     Raises
     ------
     ImportError
         If SPARQL dependencies are not installed.
+    WAFChallengeError
+        If the document cannot be fetched via SPARQL fallback.
     """
     try:
-        import pandas as pd
-
-        from eurlxp.sparql import get_celex_dataframe
+        import rdflib
     except ImportError as e:
         raise ImportError(
             "SPARQL fallback requires sparql dependencies. Install with: pip install eurlxp[sparql]"
         ) from e
 
-    logger.info("Falling back to SPARQL for CELEX ID: %s", celex_id)
+    logger.info("Falling back to SPARQL/RDF for CELEX ID: %s (language: %s)", celex_id, language)
+
+    # Map language codes to CELLAR language suffixes
+    lang_map = {
+        "en": "ENG",
+        "de": "DEU",
+        "fr": "FRA",
+        "es": "SPA",
+        "it": "ITA",
+        "nl": "NLD",
+        "pt": "POR",
+        "pl": "POL",
+        "ro": "RON",
+        "bg": "BUL",
+        "cs": "CES",
+        "da": "DAN",
+        "el": "ELL",
+        "et": "EST",
+        "fi": "FIN",
+        "ga": "GLE",
+        "hr": "HRV",
+        "hu": "HUN",
+        "lt": "LIT",
+        "lv": "LAV",
+        "mt": "MLT",
+        "sk": "SLK",
+        "sl": "SLV",
+        "sv": "SWE",
+    }
+    lang_suffix = lang_map.get(language.lower(), "ENG")
 
     try:
-        df: pd.DataFrame = get_celex_dataframe(celex_id)
+        CDM = rdflib.Namespace("http://publications.europa.eu/ontology/cdm#")
 
-        # Build a minimal HTML representation from the RDF data
-        title = celex_id
+        # Step 1: Get the work graph and find expressions
+        work_url = f"http://publications.europa.eu/resource/celex/{celex_id}?language=eng"
+        logger.debug("Fetching work RDF: %s", work_url)
+        work_graph = rdflib.Graph()
+        work_graph.parse(work_url)
 
-        # Extract title if available
-        if len(df) > 0 and "o" in df.columns:
-            title_rows = df[df["o"].str.contains("title", case=False, na=False)]
-            if len(title_rows) > 0 and "p" in df.columns:
-                title = str(title_rows.iloc[0]["p"])
+        # Find all expressions for this work
+        expressions = list(work_graph.objects(predicate=CDM.work_has_expression))
+        if not expressions:
+            raise WAFChallengeError(f"No expressions found for CELEX ID '{celex_id}' in RDF graph")
 
-        # Build HTML
-        html = f"""<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head><title>{title}</title></head>
-<body>
-    <p class="doc-ti">{title}</p>
-    <p class="normal">Document retrieved via SPARQL fallback (CELEX: {celex_id})</p>
-    <p class="normal">Full HTML content unavailable due to bot detection.</p>
-    <p class="normal">Use get_celex_dataframe("{celex_id}") for complete RDF metadata.</p>
-</body>
-</html>"""
+        # Find the expression matching the requested language
+        target_expression = None
+        for expr in expressions:
+            expr_str = str(expr)
+            if expr_str.endswith(f".{lang_suffix}"):
+                target_expression = expr_str
+                break
+
+        # Fallback to English if requested language not found
+        if not target_expression:
+            for expr in expressions:
+                expr_str = str(expr)
+                if expr_str.endswith(".ENG"):
+                    target_expression = expr_str
+                    logger.warning("Language '%s' not found, falling back to English", language)
+                    break
+
+        if not target_expression:
+            # Use first available expression
+            target_expression = str(expressions[0])
+            logger.warning("No matching language found, using: %s", target_expression)
+
+        # Step 2: Get the expression graph and find XHTML manifestation
+        logger.debug("Fetching expression RDF: %s", target_expression)
+        expr_graph = rdflib.Graph()
+        expr_graph.parse(target_expression)
+
+        manifestations = list(expr_graph.objects(predicate=CDM.expression_manifested_by_manifestation))
+        if not manifestations:
+            raise WAFChallengeError(f"No manifestations found for expression '{target_expression}'")
+
+        # Find XHTML manifestation (prefer .xhtml over .fmx4)
+        xhtml_url = None
+        for manif in manifestations:
+            manif_str = str(manif)
+            if manif_str.endswith(".xhtml"):
+                xhtml_url = manif_str
+                break
+            elif manif_str.endswith(".fmx4") and not xhtml_url:
+                xhtml_url = manif_str
+
+        if not xhtml_url:
+            raise WAFChallengeError(
+                f"No XHTML manifestation found for CELEX ID '{celex_id}'. Available: {[str(m) for m in manifestations]}"
+            )
+
+        # Step 3: Fetch the actual XHTML content
+        logger.debug("Fetching XHTML manifestation: %s", xhtml_url)
+        response = httpx.get(
+            xhtml_url,
+            headers={"Accept": "application/xhtml+xml, text/html"},
+            follow_redirects=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+
+        html = response.text
+        logger.info("Successfully fetched document via SPARQL fallback (%d bytes)", len(html))
         return html
 
+    except ImportError:
+        raise
+    except WAFChallengeError:
+        raise
     except Exception as e:
         logger.error("SPARQL fallback failed for CELEX ID %s: %s", celex_id, e)
-        raise WAFChallengeError(
-            f"Both HTML scraping and SPARQL fallback failed for CELEX ID '{celex_id}'. SPARQL error: {e}"
-        ) from e
+        raise WAFChallengeError(f"SPARQL fallback failed for CELEX ID '{celex_id}'. Error: {e}") from e
 
 
 # Base URLs for EUR-Lex resources
