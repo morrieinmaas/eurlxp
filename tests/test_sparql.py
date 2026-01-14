@@ -67,9 +67,21 @@ class TestRunQuery:
         mock_sparql_module.SPARQLWrapper = mock_sparql_class
         mock_sparql_module.JSON = "json"
 
+        # Mock the exceptions submodule
+        mock_exceptions = MagicMock()
+        mock_exceptions.EndPointInternalError = Exception
+        mock_exceptions.EndPointNotFound = Exception
+        mock_exceptions.QueryBadFormed = Exception
+
         with (
             patch("eurlxp.sparql._check_sparql_dependencies"),
-            patch.dict("sys.modules", {"SPARQLWrapper": mock_sparql_module}),
+            patch.dict(
+                "sys.modules",
+                {
+                    "SPARQLWrapper": mock_sparql_module,
+                    "SPARQLWrapper.SPARQLExceptions": mock_exceptions,
+                },
+            ),
         ):
             from importlib import reload
 

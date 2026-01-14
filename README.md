@@ -19,6 +19,9 @@ A modern EUR-Lex parser for Python. Fetch and parse EU legal documents with asyn
 - **CLI** - Command-line interface with Typer
 - **Pydantic models** - Validated, structured data
 - **Drop-in compatible** - Same API as the original eurlex package
+- **Bot detection handling** - Browser-like headers and WAF challenge detection
+- **Rate limiting** - Configurable delays between requests
+- **SPARQL support** - Alternative data source that bypasses HTML scraping
 
 ## Installation
 
@@ -74,17 +77,20 @@ uvx eurlxp info 32019R0947
 ## Quick Start
 
 ```python
-from eurlxp import get_html_by_celex_id, parse_html
+from eurlxp import get_html_by_celex_id, parse_html, WAFChallengeError
 
 # Fetch and parse a regulation
 celex_id = "32019R0947"
-html = get_html_by_celex_id(celex_id)
-df = parse_html(html)
+try:
+    html = get_html_by_celex_id(celex_id)
+    df = parse_html(html)
 
-# Get Article 1
-df_article_1 = df[df.article == "1"]
-print(df_article_1.iloc[0].text)
-# "This Regulation lays down detailed provisions for the operation of unmanned aircraft systems..."
+    # Get Article 1
+    df_article_1 = df[df.article == "1"]
+    print(df_article_1.iloc[0].text)
+    # "This Regulation lays down detailed provisions for the operation of unmanned aircraft systems..."
+except WAFChallengeError:
+    print("Bot detection triggered - try using SPARQL functions instead")
 ```
 
 ### Async Usage
@@ -94,7 +100,8 @@ import asyncio
 from eurlxp import AsyncEURLexClient, parse_html
 
 async def fetch_documents():
-    async with AsyncEURLexClient() as client:
+    # Use rate limiting to avoid bot detection
+    async with AsyncEURLexClient(request_delay=2.0) as client:
         # Fetch multiple documents concurrently
         docs = await client.fetch_multiple(["32019R0947", "32019R0945"])
         for celex_id, html in docs.items():
@@ -103,6 +110,92 @@ async def fetch_documents():
 
 asyncio.run(fetch_documents())
 ```
+
+### Handling Bot Detection
+
+EUR-Lex uses AWS WAF (Web Application Firewall) with JavaScript challenges to detect automated requests. **This cannot be bypassed in pure Python** because it requires JavaScript execution to solve a cryptographic puzzle. The library provides several strategies:
+
+```python
+from eurlxp import EURLexClient, ClientConfig, WAFChallengeError
+
+# Strategy 1: Automatic SPARQL fallback (recommended)
+# When WAF blocks HTML scraping, automatically fetch metadata via SPARQL
+config = ClientConfig(sparql_fallback=True)
+with EURLexClient(config=config) as client:
+    html = client.get_html_by_celex_id("32019R0947")  # Falls back to SPARQL if blocked
+
+# Strategy 2: Use rate limiting to avoid triggering WAF
+with EURLexClient(request_delay=2.0) as client:  # 2 second delay between requests
+    html = client.get_html_by_celex_id("32019R0947")
+
+# Strategy 3: Use custom configuration
+config = ClientConfig(
+    request_delay=3.0,           # Delay between requests
+    use_browser_headers=True,    # Use browser-like headers (default)
+    referer="https://eur-lex.europa.eu/",  # Add referer header
+)
+with EURLexClient(config=config) as client:
+    html = client.get_html_by_celex_id("32019R0947")
+
+# Strategy 4: Handle WAF challenges manually
+try:
+    html = get_html_by_celex_id("32019R0947")
+except WAFChallengeError:
+    # Fall back to SPARQL manually
+    from eurlxp import get_documents
+    docs = get_documents(types=["REG"], limit=10)
+
+# Strategy 5: Disable WAF exception (get raw challenge HTML)
+config = ClientConfig(raise_on_waf=False)
+with EURLexClient(config=config) as client:
+    html = client.get_html_by_celex_id("32019R0947")  # Returns challenge HTML if blocked
+```
+
+> **Why can't we bypass WAF in Python?** AWS WAF requires a real browser to execute JavaScript that solves a cryptographic challenge and sets a cookie. HTTP libraries like httpx can't execute JavaScript. For browser automation, consider Playwright or Selenium, but SPARQL is the cleaner solution.
+
+### Using SPARQL (Recommended for Bulk Data)
+
+The SPARQL endpoint (`https://publications.europa.eu/webapi/rdf/sparql`) doesn't trigger bot detection and is ideal for bulk operations. It's the **recommended approach** when HTML scraping is blocked.
+
+```python
+from eurlxp import get_documents, get_regulations, run_query, guess_celex_ids_via_eurlex
+
+# Convert slash notation to CELEX ID (uses SPARQL, not HTML scraping)
+celex_ids = guess_celex_ids_via_eurlex("2019/947")
+# Returns: ['32019R0947']
+
+# Get list of regulations (returns CELLAR IDs)
+cellar_ids = get_regulations(limit=100)
+
+# Get documents with metadata
+docs = get_documents(types=["REG", "DIR"], limit=50)
+for doc in docs:
+    print(f"{doc['celex']}: {doc['date']} - {doc['type']}")
+
+# Run custom SPARQL queries
+results = run_query("""
+    SELECT ?doc ?celex WHERE {
+        ?doc cdm:resource_legal_id_celex ?celex .
+    } LIMIT 10
+""")
+```
+
+**SPARQL functions include automatic retry with exponential backoff** for handling temporary 503 errors:
+
+```python
+from eurlxp import run_query, SPARQLServiceError
+
+try:
+    # Automatic retry: 3 attempts with 2s, 4s, 8s delays
+    results = run_query(query)
+    
+    # Or customize retry behavior
+    results = run_query(query, max_retries=5, retry_delay=3.0)
+except SPARQLServiceError as e:
+    print(f"SPARQL endpoint unavailable: {e}")
+```
+
+> **Note**: SPARQL functions require `pip install eurlxp[sparql]`
 
 ### CLI Usage
 
@@ -137,8 +230,22 @@ eurlxp celex 2019/947
 
 | Class | Description |
 |-------|-------------|
-| `EURLexClient` | Synchronous HTTP client |
-| `AsyncEURLexClient` | Asynchronous HTTP client |
+| `EURLexClient` | Synchronous HTTP client with rate limiting and WAF detection |
+| `AsyncEURLexClient` | Asynchronous HTTP client with rate limiting and WAF detection |
+| `ClientConfig` | Configuration dataclass for client behavior |
+| `WAFChallengeError` | Exception raised when bot detection is triggered |
+
+### ClientConfig Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `timeout` | float | 30.0 | Request timeout in seconds |
+| `headers` | dict | None | Custom headers to merge with defaults |
+| `request_delay` | float | 0.0 | Delay between requests (rate limiting) |
+| `use_browser_headers` | bool | True | Use browser-like headers to avoid detection |
+| `referer` | str | None | Optional referer header |
+| `raise_on_waf` | bool | True | Raise exception on WAF challenge |
+| `sparql_fallback` | bool | True | Auto-fallback to SPARQL when WAF blocks requests |
 
 ### DataFrame Columns
 

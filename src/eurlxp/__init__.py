@@ -15,10 +15,18 @@ from importlib.metadata import version
 
 from eurlxp.client import (
     AsyncEURLexClient,
+    ClientConfig,
+    DEFAULT_HEADERS,
+    DEFAULT_REQUEST_DELAY,
+    DEFAULT_TIMEOUT,
     EURLexClient,
+    MINIMAL_HEADERS,
+    WAFChallengeError,
+    get_default_config,
     get_html_by_celex_id,
     get_html_by_cellar_id,
     prepend_prefixes,
+    set_default_config,
     simplify_iri,
 )
 from eurlxp.models import (
@@ -39,6 +47,7 @@ from eurlxp.parser import (
     process_paragraphs,
 )
 from eurlxp.sparql import (
+    SPARQLServiceError,
     convert_sparql_output_to_dataframe,
     get_celex_dataframe,
     get_documents,
@@ -54,10 +63,18 @@ __all__ = [
     # Client
     "EURLexClient",
     "AsyncEURLexClient",
+    "ClientConfig",
+    "get_default_config",
+    "set_default_config",
     "get_html_by_celex_id",
     "get_html_by_cellar_id",
     "prepend_prefixes",
     "simplify_iri",
+    "DEFAULT_HEADERS",
+    "MINIMAL_HEADERS",
+    "DEFAULT_TIMEOUT",
+    "DEFAULT_REQUEST_DELAY",
+    "WAFChallengeError",
     # Parser
     "parse_html",
     "parse_article_paragraphs",
@@ -71,6 +88,7 @@ __all__ = [
     "guess_celex_ids_via_eurlex",
     "get_regulations",
     "get_documents",
+    "SPARQLServiceError",
     # Models
     "DocumentType",
     "SectorId",
