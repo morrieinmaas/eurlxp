@@ -1,4 +1,4 @@
-.PHONY: help install dev lint format check test test-integration build publish clean
+.PHONY: help install dev lint format check test test-integration test-all test-waf test-curl build publish publish-test clean
 
 PYTHON := uv run python
 PYTEST := uv run pytest
@@ -54,6 +54,27 @@ publish-test:  ## Publish to TestPyPI (requires TEST_PYPI_TOKEN env var)
 		exit 1; \
 	fi
 	uv publish --publish-url https://test.pypi.org/legacy/ --token $$TEST_PYPI_TOKEN
+
+test-waf:  ## Test WAF detection and SPARQL fallback (real network requests)
+	uv sync --all-extras
+	$(PYTHON) scripts/test_waf_fallback.py
+
+test-curl:  ## Test EUR-Lex endpoints with curl (shows WAF challenge if blocked)
+	@echo "Testing EUR-Lex HTML endpoint..."
+	@echo "================================"
+	@curl -s -o /dev/null -w "HTTP Status: %{http_code}\nContent-Type: %{content_type}\nSize: %{size_download} bytes\n" \
+		-H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+		"https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947"
+	@echo ""
+	@echo "Checking for WAF challenge in response..."
+	@curl -s -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+		"https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947" | head -20
+	@echo ""
+	@echo "================================"
+	@echo "Testing SPARQL endpoint..."
+	@echo "================================"
+	@curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
+		"https://publications.europa.eu/webapi/rdf/sparql?query=SELECT%20%3Fs%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%201"
 
 clean:  ## Clean build artifacts
 	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .ruff_cache/ .coverage coverage.xml htmlcov/
