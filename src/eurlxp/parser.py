@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from typing import TYPE_CHECKING
-from xml.etree import ElementTree as ETree
 
 import pandas as pd
 
@@ -81,7 +80,8 @@ def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list
     # Normalize class name: strip "oj-" prefix if present for matching
     normalized_class = css_class[3:] if css_class.startswith("oj-") else css_class
 
-    if normalized_class == "doc-ti":
+    # Document title classes: OJ format (doc-ti) and Commission format (Titreobjet, Typedudocument)
+    if normalized_class in ("doc-ti", "Titreobjet", "Typedudocument"):
         if context.document is None:
             context.document = ""
         context.document += text
@@ -91,7 +91,8 @@ def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list
         context.article_subtitle = text
         results.append(ParseResult(text=text, item_type="art-subtitle", ref=ref.copy(), context=context.copy()))
 
-    elif normalized_class == "ti-art":
+    # Article title classes: OJ format (ti-art) and Commission format (Titrearticle)
+    elif normalized_class in ("ti-art", "Titrearticle"):
         context.article = text.replace("Article", "").strip()
         results.append(ParseResult(text=text, item_type="art-title", ref=ref.copy(), context=context.copy()))
 
@@ -103,7 +104,8 @@ def _parse_span(element: Element, ref: list[str], context: ParseContext) -> list
         results.append(ParseResult(text=text, item_type="section-title", ref=ref.copy(), context=context.copy()))
         context.section = text
 
-    elif normalized_class == "normal":
+    # Normal text classes: OJ format (normal) and Commission format (Normal - capital N)
+    elif normalized_class in ("normal", "Normal"):
         match = re.match(r"^([0-9]+)[.]", text)
         if match:
             context.paragraph = text.split(".")[0]
@@ -183,13 +185,9 @@ def parse_html(html: str) -> pd.DataFrame:
     >>> parse_html('<html').to_dict(orient='records')
     []
     """
-    # Try ElementTree first (for valid XHTML)
-    try:
-        tree = ETree.fromstring(html)
-        results = _parse_article(tree)
-    except ETree.ParseError:
-        # Fall back to BeautifulSoup for malformed HTML (new EUR-Lex format)
-        results = _parse_html_with_beautifulsoup(html)
+    # Use BeautifulSoup for robust parsing of all EUR-Lex formats
+    # (OJ format, Commission proposals, etc.)
+    results = _parse_html_with_beautifulsoup(html)
 
     records = [r.to_dict() for r in results]
 
@@ -216,7 +214,8 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
     context = ParseContext()
 
     # Find document title
-    for doc_ti in soup.find_all("p", class_=["doc-ti", "oj-doc-ti"]):
+    # Supports: OJ format (doc-ti, oj-doc-ti), Commission format (Titreobjet, Typedudocument)
+    for doc_ti in soup.find_all("p", class_=["doc-ti", "oj-doc-ti", "Titreobjet", "Typedudocument"]):
         text = doc_ti.get_text(strip=True)
         if text:
             if context.document is None:
@@ -225,14 +224,38 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
             results.append(ParseResult(text=text, item_type="doc-title", ref=[], context=context.copy()))
 
     # Find article titles
-    for ti_art in soup.find_all("p", class_=["ti-art", "oj-ti-art"]):
+    # Supports: OJ format (ti-art, oj-ti-art), Commission format (Titrearticle)
+    for ti_art in soup.find_all("p", class_=["ti-art", "oj-ti-art", "Titrearticle"]):
         text = ti_art.get_text(strip=True)
         if text:
             context.article = text.replace("Article", "").strip()
             results.append(ParseResult(text=text, item_type="art-title", ref=[], context=context.copy()))
 
+    # Find group titles (ti-grseq-* classes)
+    for p_tag in soup.find_all("p"):
+        css_class = p_tag.get("class", [])
+        if isinstance(css_class, list):
+            css_class = " ".join(css_class)
+        if css_class and ("ti-grseq-" in css_class or "oj-ti-grseq-" in css_class):
+            text = p_tag.get_text(strip=True)
+            if text:
+                context.group = text
+                results.append(ParseResult(text=text, item_type="group-title", ref=[], context=context.copy()))
+
+    # Find section titles (ti-section-* classes)
+    for p_tag in soup.find_all("p"):
+        css_class = p_tag.get("class", [])
+        if isinstance(css_class, list):
+            css_class = " ".join(css_class)
+        if css_class and ("ti-section-" in css_class or "oj-ti-section-" in css_class):
+            text = p_tag.get_text(strip=True)
+            if text:
+                context.section = text
+                results.append(ParseResult(text=text, item_type="section-title", ref=[], context=context.copy()))
+
     # Find normal text paragraphs
-    for normal in soup.find_all("p", class_=["normal", "oj-normal"]):
+    # Supports: OJ format (normal, oj-normal), Commission format (Normal - capital N)
+    for normal in soup.find_all("p", class_=["normal", "oj-normal", "Normal"]):
         text = normal.get_text(strip=True)
         if text:
             # Check for numbered paragraphs
