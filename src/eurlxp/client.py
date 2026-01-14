@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import rdflib
 import time
 from dataclasses import dataclass
 
@@ -41,11 +45,89 @@ def _is_waf_challenge(html: str) -> bool:
     return any(indicator in html for indicator in waf_indicators)
 
 
-def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
+def _fetch_and_extract_pdf(pdf_manifest_url: str, expr_graph: rdflib.Graph, cdm_ns: rdflib.Namespace) -> str:
+    """Fetch PDF and extract text, wrapping it in minimal HTML.
+
+    Parameters
+    ----------
+    pdf_manifest_url : str
+        The PDF manifestation URL from RDF.
+    expr_graph : rdflib.Graph
+        The expression RDF graph (to find the actual PDF item URL).
+    cdm_ns : rdflib.Namespace
+        The CDM namespace.
+
+    Returns
+    -------
+    str
+        Extracted text wrapped in minimal HTML structure.
+    """
+    import io
+
+    import pymupdf
+
+    # Get the actual PDF item URL from the manifestation
+    manif_graph = expr_graph.__class__()
+    manif_graph.parse(pdf_manifest_url)
+    items = list(manif_graph.objects(predicate=cdm_ns.manifestation_has_item))
+
+    if not items:
+        raise WAFChallengeError(f"No PDF item found for manifestation '{pdf_manifest_url}'")
+
+    pdf_item_url = str(items[0])
+    logger.debug("Fetching PDF from: %s", pdf_item_url)
+
+    # Fetch the PDF (use wildcard Accept header as server is picky)
+    response = httpx.get(
+        pdf_item_url,
+        headers={"Accept": "*/*"},
+        follow_redirects=True,
+        timeout=DEFAULT_TIMEOUT,
+    )
+    response.raise_for_status()
+
+    # Extract text using PyMuPDF
+    pdf_bytes = response.content
+    doc = pymupdf.open(stream=io.BytesIO(pdf_bytes), filetype="pdf")
+
+    paragraphs: list[str] = []
+    for page in doc:
+        page_text = page.get_text()
+        # get_text() can return various types, ensure we have a string
+        if isinstance(page_text, str):
+            # Split into paragraphs and filter empty lines
+            for para in page_text.split("\n\n"):
+                para = para.strip()
+                if para:
+                    paragraphs.append(para)
+
+    doc.close()
+
+    # Wrap extracted text in minimal HTML for parser compatibility
+    html_parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<html xmlns="http://www.w3.org/1999/xhtml">',
+        "<head><title>PDF Extract</title></head>",
+        "<body>",
+    ]
+    for para in paragraphs:
+        # Escape HTML entities
+        para_escaped = para.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        html_parts.append(f'<p class="Normal">{para_escaped}</p>')
+    html_parts.append("</body></html>")
+
+    html = "\n".join(html_parts)
+    logger.info("Successfully extracted text from PDF (%d paragraphs, %d bytes)", len(paragraphs), len(html))
+    return html
+
+
+def _fetch_html_via_sparql(celex_id: str, language: str = "en", include_pdf: bool = True) -> str:
     """Fetch document content via SPARQL/RDF as fallback when HTML scraping is blocked.
 
     This traverses the CELLAR RDF graph to find the XHTML manifestation URL:
     Work (CELEX) -> Expression (language) -> Manifestation (xhtml)
+
+    If no XHTML is available and include_pdf=True, falls back to PDF extraction.
 
     Parameters
     ----------
@@ -53,11 +135,13 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
         The CELEX identifier.
     language : str
         Language code (default: "en").
+    include_pdf : bool
+        If True, extract text from PDF when XHTML is not available (default: True).
 
     Returns
     -------
     str
-        The actual XHTML content of the document.
+        The actual XHTML content of the document, or extracted text wrapped in HTML if from PDF.
 
     Raises
     ------
@@ -151,6 +235,7 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
 
         # Find XHTML manifestation (prefer .xhtml over .fmx4)
         xhtml_url = None
+        pdf_url = None
         for manif in manifestations:
             manif_str = str(manif)
             if manif_str.endswith(".xhtml"):
@@ -158,25 +243,32 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
                 break
             elif manif_str.endswith(".fmx4") and not xhtml_url:
                 xhtml_url = manif_str
+            elif manif_str.endswith(".pdfa1b") or manif_str.endswith(".pdf"):
+                pdf_url = manif_str
 
-        if not xhtml_url:
+        # Step 3: Fetch the content (XHTML preferred, PDF fallback)
+        if xhtml_url:
+            logger.debug("Fetching XHTML manifestation: %s", xhtml_url)
+            response = httpx.get(
+                xhtml_url,
+                headers={"Accept": "application/xhtml+xml, text/html"},
+                follow_redirects=True,
+                timeout=DEFAULT_TIMEOUT,
+            )
+            response.raise_for_status()
+            html = response.text
+            logger.info("Successfully fetched document via SPARQL fallback (%d bytes)", len(html))
+            return html
+
+        elif pdf_url and include_pdf:
+            # No XHTML available, try PDF extraction
+            logger.info("No XHTML available, attempting PDF extraction for CELEX ID: %s", celex_id)
+            return _fetch_and_extract_pdf(pdf_url, expr_graph, CDM)
+
+        else:
             raise WAFChallengeError(
                 f"No XHTML manifestation found for CELEX ID '{celex_id}'. Available: {[str(m) for m in manifestations]}"
             )
-
-        # Step 3: Fetch the actual XHTML content
-        logger.debug("Fetching XHTML manifestation: %s", xhtml_url)
-        response = httpx.get(
-            xhtml_url,
-            headers={"Accept": "application/xhtml+xml, text/html"},
-            follow_redirects=True,
-            timeout=DEFAULT_TIMEOUT,
-        )
-        response.raise_for_status()
-
-        html = response.text
-        logger.info("Successfully fetched document via SPARQL fallback (%d bytes)", len(html))
-        return html
 
     except ImportError:
         raise

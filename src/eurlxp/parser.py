@@ -201,15 +201,20 @@ def parse_html(html: str) -> pd.DataFrame:
 
 
 def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
-    """Parse HTML/XML using BeautifulSoup with lxml-xml parser.
+    """Parse HTML/XML using BeautifulSoup.
 
-    This is used as a fallback when ElementTree fails to parse the HTML.
-    The new EUR-Lex format is XHTML, so we parse it as XML.
+    Tries lxml-xml parser first (for XHTML documents), then falls back to
+    lxml HTML parser for older HTML documents.
     """
     from bs4 import BeautifulSoup
 
-    # Use lxml-xml parser for proper XML/XHTML parsing
+    # Try lxml-xml parser first (for XHTML documents)
     soup = BeautifulSoup(html, "lxml-xml")
+
+    # If no <p> tags found, try lxml HTML parser (for older HTML documents)
+    if not soup.find_all("p"):
+        soup = BeautifulSoup(html, "lxml")
+
     results: list[ParseResult] = []
     context = ParseContext()
 
@@ -269,6 +274,22 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
                 # Remove the number prefix
                 text = re.sub(r"^[(]?[0-9]+[).]?\s*", "", text)
             results.append(ParseResult(text=text, item_type="text", ref=[], context=context.copy()))
+
+    # Fallback: if no text results found, extract text from all <p> tags
+    # This handles unknown EUR-Lex formats that use different CSS classes
+    text_results = [r for r in results if r.item_type == "text"]
+    if not text_results:
+        for p_tag in soup.find_all("p"):
+            text = p_tag.get_text(strip=True)
+            # Skip short text, HTML fragments, and navigation elements
+            if (
+                text
+                and len(text) > 30
+                and not text.startswith("role=")
+                and "aria-label" not in text
+                and "<" not in text
+            ):
+                results.append(ParseResult(text=text, item_type="text", ref=[], context=context.copy()))
 
     return results
 

@@ -43,8 +43,14 @@ class TestParseContext:
     def test_to_dict(self) -> None:
         ctx = ParseContext(document="Doc", article="1")
         d = ctx.to_dict()
-        assert d == {"document": "Doc", "article": "1"}
-        assert "paragraph" not in d  # None values excluded
+        # All fields included for consistent DataFrame columns
+        assert d == {
+            "document": "Doc",
+            "article": "1",
+            "paragraph": None,
+            "group": None,
+            "section": None,
+        }
 
 
 class TestParseResult:
