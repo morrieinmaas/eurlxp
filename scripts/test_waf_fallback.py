@@ -109,11 +109,86 @@ def test_sparql_fallback_fetches_real_content() -> None:
         logger.error(f"✗ Error: {e}")
 
 
+def test_parser_different_formats() -> None:
+    """Test parser with different EUR-Lex document formats."""
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("Test 4: Parser handles different document formats")
+    logger.info("=" * 60)
+
+    try:
+        import eurlxp as el
+
+        test_cases = [
+            ("2026/2", "Commission proposal format"),
+            ("1983/2", "Older document format"),
+        ]
+
+        for slash_notation, description in test_cases:
+            logger.info(f"\nTesting {slash_notation} ({description})...")
+            possible_docs = el.guess_celex_ids_via_eurlex(slash_notation)
+            logger.info(f"  Found CELEX IDs: {possible_docs[:3]}")
+
+            for doc in possible_docs[:2]:  # Test first 2
+                try:
+                    html = el.get_html_by_celex_id(doc)
+                    df = el.parse_html(html)
+                    logger.info(f"  {doc}: {df.shape} columns={df.columns.tolist()}")
+                    if len(df) > 0:
+                        first_text = df.iloc[0]["text"][:60]
+                        logger.info(f"    First: {first_text}...")
+                    else:
+                        logger.warning(f"    ⚠ Empty DataFrame")
+                except Exception as e:
+                    logger.error(f"  {doc}: Error - {e}")
+
+        logger.info("✓ Parser format tests complete")
+
+    except ImportError as e:
+        logger.warning(f"✗ Dependencies not installed: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error: {e}")
+
+
+def test_pdf_extraction() -> None:
+    """Test PDF extraction for documents without XHTML."""
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("Test 5: PDF extraction for old documents")
+    logger.info("=" * 60)
+
+    try:
+        from eurlxp.client import _fetch_html_via_sparql
+        from eurlxp.parser import parse_html
+
+        # Test with a 1983 document that only has PDF
+        celex_id = "31983R0002"
+        logger.info(f"Testing PDF extraction for {celex_id}...")
+
+        html = _fetch_html_via_sparql(celex_id, "en", include_pdf=True)
+        logger.info(f"✓ Fetched {len(html)} bytes via PDF extraction")
+
+        df = parse_html(html)
+        logger.info(f"✓ Parsed to DataFrame with {len(df)} rows")
+
+        if len(df) > 0:
+            first_text = df.iloc[0]["text"][:80]
+            logger.info(f"  First row: {first_text}...")
+            logger.info("✓ PDF extraction successfully extracts document content!")
+        else:
+            logger.warning("⚠ DataFrame is empty")
+
+    except ImportError as e:
+        logger.warning(f"✗ Dependencies not installed: {e}")
+    except Exception as e:
+        logger.error(f"✗ Error: {e}")
+
+
 def test_sparql_direct() -> None:
     """Test SPARQL endpoint directly."""
     logger.info("")
     logger.info("=" * 60)
-    logger.info("Test 4: Direct SPARQL query (no HTML scraping)")
+    logger.info("Test 6: Direct SPARQL query (no HTML scraping)")
     logger.info("=" * 60)
 
     try:
@@ -146,6 +221,8 @@ def main() -> int:
     test_with_sparql_fallback()
     test_without_sparql_fallback()
     test_sparql_fallback_fetches_real_content()
+    test_parser_different_formats()
+    test_pdf_extraction()
     test_sparql_direct()
 
     logger.info("")

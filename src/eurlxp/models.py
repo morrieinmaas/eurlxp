@@ -105,8 +105,14 @@ class ParseContext:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary, excluding None values."""
-        return {k: v for k, v in self.__dict__.items() if v is not None}
+        """Convert to dictionary with all fields (None values included for consistent columns)."""
+        return {
+            "document": self.document,
+            "article": self.article,
+            "paragraph": self.paragraph,
+            "group": self.group,
+            "section": self.section,
+        }
 
 
 @dataclass

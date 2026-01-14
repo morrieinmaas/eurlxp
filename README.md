@@ -22,6 +22,7 @@ A modern EUR-Lex parser for Python. Fetch and parse EU legal documents with asyn
 - **Bot detection handling** - Browser-like headers and WAF challenge detection
 - **Rate limiting** - Configurable delays between requests
 - **SPARQL support** - Alternative data source that bypasses HTML scraping
+- **PDF extraction** - Automatic text extraction from PDF for older documents without HTML
 
 ## Installation
 
@@ -39,6 +40,8 @@ uv add eurlxp[sparql]
 ```
 
 > **Note**: SPARQL functions (`get_celex_dataframe`, `run_query`, `get_regulations`, `get_documents`, `guess_celex_ids_via_eurlex`) require the optional `sparql` dependencies. If you see `ImportError: SPARQL dependencies not installed`, install with `pip install eurlxp[sparql]`.
+
+> **PDF extraction**: Included by default (no extra install needed). Older documents without HTML are automatically extracted from PDF.
 
 ## How It Works
 

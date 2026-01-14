@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2025-01-14
+
+### Added
+
+- **PDF extraction fallback** - When XHTML is not available (older documents from 1983 and earlier), automatically extracts text from PDF using PyMuPDF
+- **PyMuPDF as core dependency** - PDF extraction is now always available
+
+### Fixed
+
+- **Consistent DataFrame columns** - `parse_html()` now always returns 8 columns (`text`, `type`, `ref`, `document`, `article`, `paragraph`, `group`, `section`) instead of variable column count
+- **Fallback for unknown formats** - Extracts text from all `<p>` tags when no known CSS classes are found
+- **HTML parser fallback** - Tries lxml HTML parser when lxml-xml (XHTML) parser finds no content, fixing parsing of older HTML documents
+- **Old documents now parseable** - Documents that only have PDF versions can now be fetched and parsed
+
 ## [0.3.2] - 2025-01-14
 
 ### Fixed
