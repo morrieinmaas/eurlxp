@@ -23,7 +23,9 @@ class WAFChallengeError(Exception):
     3. Use a browser automation tool like Playwright
     """
 
-    def __init__(self, message: str = "EUR-Lex returned an AWS WAF challenge. See WAFChallengeError docs for solutions."):
+    def __init__(
+        self, message: str = "EUR-Lex returned an AWS WAF challenge. See WAFChallengeError docs for solutions."
+    ):
         super().__init__(message)
 
 
@@ -39,7 +41,7 @@ def _is_waf_challenge(html: str) -> bool:
     return any(indicator in html for indicator in waf_indicators)
 
 
-def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
+def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:  # noqa: ARG001
     """Fetch document content via SPARQL as fallback when HTML scraping is blocked.
 
     This returns a simplified HTML representation built from SPARQL metadata.
@@ -63,6 +65,8 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
         If SPARQL dependencies are not installed.
     """
     try:
+        import pandas as pd
+
         from eurlxp.sparql import get_celex_dataframe
     except ImportError as e:
         raise ImportError(
@@ -72,16 +76,16 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
     logger.info("Falling back to SPARQL for CELEX ID: %s", celex_id)
 
     try:
-        df = get_celex_dataframe(celex_id)
+        df: pd.DataFrame = get_celex_dataframe(celex_id)
 
         # Build a minimal HTML representation from the RDF data
         title = celex_id
-        content_parts: list[str] = []
 
         # Extract title if available
-        title_rows = df[df["o"].str.contains("title", case=False, na=False)] if len(df) > 0 else []
-        if len(title_rows) > 0:
-            title = str(title_rows.iloc[0]["p"]) if "p" in df.columns else celex_id
+        if len(df) > 0 and "o" in df.columns:
+            title_rows = df[df["o"].str.contains("title", case=False, na=False)]
+            if len(title_rows) > 0 and "p" in df.columns:
+                title = str(title_rows.iloc[0]["p"])
 
         # Build HTML
         html = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -99,9 +103,9 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en") -> str:
     except Exception as e:
         logger.error("SPARQL fallback failed for CELEX ID %s: %s", celex_id, e)
         raise WAFChallengeError(
-            f"Both HTML scraping and SPARQL fallback failed for CELEX ID '{celex_id}'. "
-            f"SPARQL error: {e}"
+            f"Both HTML scraping and SPARQL fallback failed for CELEX ID '{celex_id}'. SPARQL error: {e}"
         ) from e
+
 
 # Base URLs for EUR-Lex resources
 # Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors

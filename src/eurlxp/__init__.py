@@ -14,13 +14,13 @@ True
 from importlib.metadata import version
 
 from eurlxp.client import (
-    AsyncEURLexClient,
-    ClientConfig,
     DEFAULT_HEADERS,
     DEFAULT_REQUEST_DELAY,
     DEFAULT_TIMEOUT,
-    EURLexClient,
     MINIMAL_HEADERS,
+    AsyncEURLexClient,
+    ClientConfig,
+    EURLexClient,
     WAFChallengeError,
     get_default_config,
     get_html_by_celex_id,

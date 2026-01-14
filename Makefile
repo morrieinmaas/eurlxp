@@ -59,22 +59,30 @@ test-waf:  ## Test WAF detection and SPARQL fallback (real network requests)
 	uv sync --all-extras
 	$(PYTHON) scripts/test_waf_fallback.py
 
-test-curl:  ## Test EUR-Lex endpoints with curl (shows WAF challenge if blocked)
-	@echo "Testing EUR-Lex HTML endpoint..."
-	@echo "================================"
-	@curl -s -o /dev/null -w "HTTP Status: %{http_code}\nContent-Type: %{content_type}\nSize: %{size_download} bytes\n" \
-		-H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
-		"https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947"
+test-curl:  ## Test EUR-Lex endpoints with curl (detects WAF challenge)
+	@echo "EUR-Lex Endpoint Status Check"
+	@echo "=============================="
 	@echo ""
-	@echo "Checking for WAF challenge in response..."
-	@curl -s -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
-		"https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947" | head -20
+	@echo "1. HTML Endpoint (CELEX:32019R0947):"
+	@response=$$(curl -s -H "User-Agent: Mozilla/5.0" "https://eur-lex.europa.eu/legal-content/EN/TXT/HTML/?uri=CELEX:32019R0947"); \
+	if echo "$$response" | grep -q "awswaf.com\|AwsWafIntegration\|challenge.js"; then \
+		echo "   ❌ WAF CHALLENGE DETECTED - Bot detection is blocking requests"; \
+		echo "   → SPARQL fallback will be used automatically"; \
+	else \
+		size=$$(echo "$$response" | wc -c | tr -d ' '); \
+		echo "   ✅ OK - Direct HTML access working ($$size bytes)"; \
+	fi
 	@echo ""
-	@echo "================================"
-	@echo "Testing SPARQL endpoint..."
-	@echo "================================"
-	@curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
-		"https://publications.europa.eu/webapi/rdf/sparql?query=SELECT%20%3Fs%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%201"
+	@echo "2. SPARQL Endpoint:"
+	@status=$$(curl -s -o /dev/null -w "%{http_code}" "https://publications.europa.eu/webapi/rdf/sparql?query=SELECT%20%3Fs%20WHERE%20%7B%20%3Fs%20%3Fp%20%3Fo%20%7D%20LIMIT%201"); \
+	if [ "$$status" = "200" ]; then \
+		echo "   ✅ OK - SPARQL endpoint available (HTTP $$status)"; \
+	elif [ "$$status" = "503" ]; then \
+		echo "   ⚠️  TEMPORARILY UNAVAILABLE (HTTP 503) - Will retry with backoff"; \
+	else \
+		echo "   ❌ ERROR (HTTP $$status)"; \
+	fi
+	@echo ""
 
 clean:  ## Clean build artifacts
 	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .ruff_cache/ .coverage coverage.xml htmlcov/
