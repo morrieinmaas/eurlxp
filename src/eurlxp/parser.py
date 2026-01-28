@@ -369,7 +369,7 @@ def get_celex_id(slash_notation: str, document_type: str = "R", sector_id: str =
     term1_is_year = 1800 <= term1 <= current_year
     term2_is_year = 1800 <= term2 <= current_year
 
-    year, document_id = term2, term1
+    year, document_id = term1, term2
     if term1_is_year and not term2_is_year:
         year, document_id = term1, term2
     elif term2_is_year and not term1_is_year:
