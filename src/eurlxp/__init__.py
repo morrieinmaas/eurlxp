@@ -25,6 +25,7 @@ from eurlxp.client import (
     get_default_config,
     get_html_by_celex_id,
     get_html_by_cellar_id,
+    get_html_by_cellar_url,
     prepend_prefixes,
     set_default_config,
     simplify_iri,
@@ -53,6 +54,7 @@ from eurlxp.sparql import (
     get_documents,
     get_regulations,
     guess_celex_ids_via_eurlex,
+    get_ids_and_urls_via_date,
     run_query,
 )
 
