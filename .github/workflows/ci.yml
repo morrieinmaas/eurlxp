@@ -17,20 +17,23 @@ jobs:
         with:
           version: "latest"
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Set up Python
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: make dev
+        run: just dev
 
       - name: Run linting
-        run: make lint
+        run: just lint
 
       - name: Check formatting
         run: uv run ruff format --check src tests
 
       - name: Run type checking
-        run: make check
+        run: just check
 
   test:
     runs-on: ubuntu-latest
@@ -47,11 +50,14 @@ jobs:
         with:
           version: "latest"
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: make dev
+        run: just dev
 
       - name: Run tests
         run: uv run pytest -v --cov=eurlxp --cov-report=xml -m "not integration"
@@ -75,12 +81,15 @@ jobs:
         with:
           version: "latest"
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Set up Python
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: make dev
+        run: just dev
 
       - name: Run integration tests
-        run: make test-integration
+        run: just test-integration
         continue-on-error: true

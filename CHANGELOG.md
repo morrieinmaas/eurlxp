@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-04
+
+### Added
+
+- **Date-based document querying** - New `get_ids_and_urls_via_date()` function to query documents by date range via SPARQL
+  - Returns `DocumentReference` objects with both CELEX ID and cellar URL
+  - Cellar URL always works for fetching, even when CELEX ID is non-standard
+  - `date_type` parameter to query by publication date, modification date, or creation date
+  - Use `DateType.MODIFIED` to find amended documents regardless of original publication year
+- **CELEX ID validation** - New functions to parse and validate CELEX IDs:
+  - `parse_celex_id()` - Parse CELEX ID into components (sector, year, doc_type, number, suffix)
+  - `is_valid_celex_id()` - Check if a string is a valid CELEX ID format
+  - Correctly identifies OJ references (like `C/2026/00064`) as non-CELEX formats
+- **Cellar URL fetching** - New `get_html_by_cellar_url()` function to fetch documents directly by cellar URL
+  - Sync method on `EURLexClient`
+  - Async method on `AsyncEURLexClient`
+  - Convenience function at module level
+  - Handles URLs with suffixes like `/DOC_1`
+- **DateType enum** - For specifying which date field to filter on:
+  - `DateType.DOCUMENT` - Publication date (default)
+  - `DateType.MODIFIED` - Last modification date (for finding updates to old documents)
+  - `DateType.CREATED` - Creation date in CELLAR
+- **DocumentReference dataclass** - Structured return type for document queries containing:
+  - `cellar_url` - Always available, always works for fetching
+  - `celex_id` - Valid CELEX ID or None if format is non-standard
+  - `raw_id` - Original ID from query (may be OJ reference or have revision suffix)
+  - `document_date` - The date matching the query filter
+- **Unified document fetching** - New functions that auto-detect identifier types:
+  - `get_html()` - Fetch a single document by any identifier type (including OJ references via SPARQL lookup)
+  - `fetch_documents()` - Batch fetch multiple documents with mixed identifier types
+  - `detect_id_type()` - Detect whether an identifier is CELEX, cellar URL, cellar ID, or OJ reference
+  - `lookup_cellar_url()` - Look up cellar URL for any identifier via SPARQL (used internally by `get_html()`)
+- **OJ reference detection** - `detect_id_type()` now returns `"oj_reference"` for Official Journal references like `C/2026/00064`
+- **HTTP retry with exponential backoff** - All HTTP requests now automatically retry on transient server errors (500, 502, 503, 504)
+  - `ClientConfig` now supports `max_retries`, `retry_delay`, and `retry_backoff` parameters
+  - SPARQL fallback and PDF extraction also benefit from retry logic
+  - Default: 3 retries with 2s initial delay and 2x backoff (2s → 4s → 8s)
+
+### Fixed
+
+- Fixed broken import in `guess_celex_ids_via_eurlex()` (`from parser` → `from eurlxp.parser`)
+- Fixed `get_html_by_cellar_url` convenience function signature (removed erroneous `self` parameter)
+- Added missing rate limiting to sync `get_html_by_cellar_url` method
+- Fixed docstring typos in cellar URL methods
+
 ## [0.3.3] - 2025-01-14
 
 ### Added
