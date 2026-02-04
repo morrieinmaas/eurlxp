@@ -9,7 +9,7 @@ This script tests the library's ability to:
 Usage:
     uv run python scripts/test_waf_fallback.py
     # or
-    make test-waf
+    just test-waf
 """
 
 from __future__ import annotations

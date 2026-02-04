@@ -338,6 +338,83 @@ def parse_article_paragraphs(article: str) -> dict[str | None, str]:
     return {p: "\n".join(lines).strip() for p, lines in paragraphs.items()}
 
 
+def parse_celex_id(celex_id: str) -> dict[str, str | None] | None:
+    """Parse a CELEX ID into its components.
+
+    Parameters
+    ----------
+    celex_id : str
+        The CELEX identifier to parse.
+
+    Returns
+    -------
+    dict[str, str | None] | None
+        A dict with keys: sector, year, doc_type, number, suffix.
+        Returns None if the ID is not a valid CELEX format.
+
+    Examples
+    --------
+    >>> parse_celex_id('32019R0947')
+    {'sector': '3', 'year': '2019', 'doc_type': 'R', 'number': '0947', 'suffix': None}
+    >>> parse_celex_id('32012L0029R(06)')
+    {'sector': '3', 'year': '2012', 'doc_type': 'L', 'number': '0029', 'suffix': 'R(06)'}
+    >>> parse_celex_id('C/2026/00064')  # OJ reference, not CELEX
+    """
+    if not celex_id:
+        return None
+
+    # OJ series references like C/2026/00064 are not CELEX IDs
+    if "/" in celex_id:
+        return None
+
+    # CELEX format: [Sector][Year (4 digits)][Type (1-2 chars)][Number (2-5 digits)][Optional suffix]
+    # Sectors: 0-9, C, E
+    # Example: 32019R0947, 52026XG00745, 32012L0029R(06)
+    pattern = r"^([0-9CE])(\d{4})([A-Z]{1,3})(\d{2,5})(.*)$"
+    match = re.match(pattern, celex_id)
+
+    if not match:
+        return None
+
+    sector, year, doc_type, number, suffix = match.groups()
+
+    # Validate year is reasonable (1950-2100)
+    year_int = int(year)
+    if year_int < 1950 or year_int > 2100:
+        return None
+
+    return {
+        "sector": sector,
+        "year": year,
+        "doc_type": doc_type,
+        "number": number,
+        "suffix": suffix if suffix else None,
+    }
+
+
+def is_valid_celex_id(celex_id: str) -> bool:
+    """Check if a string is a valid CELEX ID format.
+
+    Parameters
+    ----------
+    celex_id : str
+        The string to check.
+
+    Returns
+    -------
+    bool
+        True if the string matches CELEX ID format.
+
+    Examples
+    --------
+    >>> is_valid_celex_id('32019R0947')
+    True
+    >>> is_valid_celex_id('C/2026/00064')
+    False
+    """
+    return parse_celex_id(celex_id) is not None
+
+
 def get_celex_id(slash_notation: str, document_type: str = "R", sector_id: str = "3") -> str:
     """Derive CELEX ID from slash notation (e.g., 2019/947).
 
@@ -361,6 +438,11 @@ def get_celex_id(slash_notation: str, document_type: str = "R", sector_id: str =
     '32019R0947'
     >>> get_celex_id('947/2019')
     '32019R0947'
+
+    Changelog 04-02-2026
+    --------
+    Handle cases where both are years - like 2025/1987, using the ruling that the first term is year
+
     """
     term1_str, term2_str = slash_notation.split("/")
     current_year = datetime.now().year
@@ -369,7 +451,7 @@ def get_celex_id(slash_notation: str, document_type: str = "R", sector_id: str =
     term1_is_year = 1800 <= term1 <= current_year
     term2_is_year = 1800 <= term2 <= current_year
 
-    year, document_id = term2, term1
+    year, document_id = term1, term2
     if term1_is_year and not term2_is_year:
         year, document_id = term1, term2
     elif term2_is_year and not term1_is_year:
@@ -403,11 +485,19 @@ def get_possible_celex_ids(
     --------
     >>> '32019R0947' in get_possible_celex_ids("2019/947")
     True
+
+    Changelog - 04-02-2026
+    --------
+    Add D, to possible document types later removed E due to query character limit
     """
     sector_ids = [str(i) for i in range(10)] + ["C", "E"] if sector_id is None else [str(sector_id)]
     document_types = (
-        ["L", "R", "E", "PC", "DC", "SC", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
+        ["L", "R", "D", "PC", "DC", "SC", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
     )
+
+    # document_types = (
+    #     ["L", "R", "E", "D", "PC", "DC", "SC", "SWD", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
+    # )
 
     return [get_celex_id(slash_notation, dt, sid) for sid in sector_ids for dt in document_types]
 
