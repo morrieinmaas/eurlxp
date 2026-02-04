@@ -361,6 +361,11 @@ def get_celex_id(slash_notation: str, document_type: str = "R", sector_id: str =
     '32019R0947'
     >>> get_celex_id('947/2019')
     '32019R0947'
+
+    Changelog 04-02-2026
+    --------
+    Handle cases where both are years - like 2025/1987, using the ruling that the first term is year
+
     """
     term1_str, term2_str = slash_notation.split("/")
     current_year = datetime.now().year
@@ -403,11 +408,19 @@ def get_possible_celex_ids(
     --------
     >>> '32019R0947' in get_possible_celex_ids("2019/947")
     True
+
+    Changelog - 04-02-2026
+    --------
+    Add D, to possible document types later removed E due to query character limit
     """
     sector_ids = [str(i) for i in range(10)] + ["C", "E"] if sector_id is None else [str(sector_id)]
     document_types = (
-        ["L", "R", "E", "PC", "DC", "SC", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
+        ["L", "R", "D", "PC", "DC", "SC", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
     )
+
+    # document_types = (
+    #     ["L", "R", "E", "D", "PC", "DC", "SC", "SWD", "JC", "CJ", "CC", "CO"] if document_type is None else [document_type]
+    # )
 
     return [get_celex_id(slash_notation, dt, sid) for sid in sector_ids for dt in document_types]
 
