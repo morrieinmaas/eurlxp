@@ -8,7 +8,7 @@ way to query EUR-Lex data as it doesn't trigger bot detection like HTML scraping
 """
 
 from __future__ import annotations
-
+from eurlxp.client import prepend_prefixes
 import logging
 import time
 from typing import TYPE_CHECKING
@@ -202,7 +202,7 @@ def guess_celex_ids_via_eurlex(
     >>> celex_ids = guess_celex_ids_via_eurlex("2019/947")  # doctest: +SKIP
     """
     from eurlxp.client import prepend_prefixes
-    from eurlxp.parser import get_possible_celex_ids
+    from parser import get_possible_celex_ids
 
     slash_notation = "/".join(slash_notation.split("/")[:2])
     possible_ids = get_possible_celex_ids(slash_notation, document_type, sector_id)
@@ -220,6 +220,59 @@ def guess_celex_ids_via_eurlex(
             celex_ids.append(celex_id)
 
     return list(set(celex_ids))
+
+
+
+def get_ids_and_urls_via_date(
+    from_date: str, to_date: str| None = None
+):
+    """Gets a set of document with CELEX idts for a time dureation looking it up via EUR-Lex.
+
+    Parameters
+    ----------
+    from_date : str
+        The from date with dash format (e.g. 2026-01-01).
+    document_type : str, optional
+        The to date with dash format (e.g. 2026-01-01). If empty, set at same date as from, giving entries for just that day.
+   
+    Returns
+    -------
+    list[str] celex_ids_malformed
+        A list of existing CELEX IDs, some diverting from the standatised shape, due to edits, version, etc..
+    list[str] cellar_urls
+        A list of urls, pointing to the matching celex-id-ed document, indentified via matching url ( that done, via specificities of the underlining EUR Lex system, as of 2026)
+    """
+    from eurlxp.client import prepend_prefixes
+
+    if to_date == None:
+        to_date = from_date
+
+    query = f"""
+SELECT ?work (STRAFTER(STR(?celexUri), "celex:") AS ?celexId) ?celexUri ?documentDate
+WHERE {{
+		?work a cdm:work ;
+        cdm:work_id_document ?celexUri ;
+        cdm:work_date_document ?documentDate .
+  
+  FILTER(?documentDate >= "{from_date}"^^xsd:date && 
+         ?documentDate <= "{to_date}"^^xsd:date &&
+         regex(str(?celexUri), "celex"))
+}}
+ORDER BY DESC(?documentDate)"""
+
+    query = prepend_prefixes(query)
+    results = run_query(query.strip())
+
+    celex_ids_malformed: list[str]  = []
+    celler_uuid_urls: list[str]  = []
+    
+    for binding in results["results"]["bindings"]:
+        celex_id_maybe_malformed = binding["celexId"]["value"]
+        celex_ids_malformed.append(celex_id_maybe_malformed)
+        celler_url = binding["work"]["value"]
+        celler_uuid_urls.append(celler_url)
+    return celex_ids_malformed, celler_uuid_urls
+
 
 
 def get_regulations(limit: int = -1, shuffle: bool = False) -> list[str]:
