@@ -45,6 +45,93 @@ def _is_waf_challenge(html: str) -> bool:
     return any(indicator in html for indicator in waf_indicators)
 
 
+def _http_get_with_retry(
+    url: str,
+    headers: dict[str, str] | None = None,
+    timeout: float | None = None,
+    max_retries: int | None = None,
+    retry_delay: float | None = None,
+    retry_backoff: float | None = None,
+) -> httpx.Response:
+    """Make an HTTP GET request with retry logic for transient errors.
+
+    This is a module-level helper for use by functions that don't have
+    access to an EURLexClient instance (like _fetch_html_via_sparql).
+
+    Parameters
+    ----------
+    url : str
+        The URL to fetch.
+    headers : dict[str, str] | None
+        Optional headers to include.
+    timeout : float | None
+        Request timeout (defaults to DEFAULT_TIMEOUT).
+    max_retries : int | None
+        Maximum retry attempts (defaults to DEFAULT_MAX_RETRIES).
+    retry_delay : float | None
+        Initial retry delay (defaults to DEFAULT_RETRY_DELAY).
+    retry_backoff : float | None
+        Backoff multiplier (defaults to DEFAULT_RETRY_BACKOFF).
+
+    Returns
+    -------
+    httpx.Response
+        The HTTP response.
+
+    Raises
+    ------
+    httpx.HTTPStatusError
+        If the request fails after all retries.
+    """
+    # Use module-level constants (defined later in this file, but available at runtime)
+    _timeout = timeout if timeout is not None else 30.0  # DEFAULT_TIMEOUT
+    _max_retries = max_retries if max_retries is not None else 3  # DEFAULT_MAX_RETRIES
+    _retry_delay = retry_delay if retry_delay is not None else 2.0  # DEFAULT_RETRY_DELAY
+    _retry_backoff = retry_backoff if retry_backoff is not None else 2.0  # DEFAULT_RETRY_BACKOFF
+    _retryable_codes = {500, 502, 503, 504}  # RETRYABLE_STATUS_CODES
+
+    last_error: httpx.HTTPStatusError | None = None
+    current_delay = _retry_delay
+
+    for attempt in range(_max_retries + 1):
+        try:
+            response = httpx.get(
+                url,
+                headers=headers,
+                follow_redirects=True,
+                timeout=_timeout,
+            )
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code not in _retryable_codes:
+                raise
+
+            last_error = e
+            if attempt < _max_retries:
+                logger.warning(
+                    "HTTP %d error (attempt %d/%d) for %s. Retrying in %.1fs...",
+                    e.response.status_code,
+                    attempt + 1,
+                    _max_retries + 1,
+                    url[:80],
+                    current_delay,
+                )
+                time.sleep(current_delay)
+                current_delay *= _retry_backoff
+            else:
+                logger.error(
+                    "HTTP request failed after %d attempts: %s",
+                    _max_retries + 1,
+                    e,
+                )
+
+    # Should never reach here, but satisfy type checker
+    if last_error:
+        raise last_error
+    raise RuntimeError("Unexpected retry loop exit")
+
+
 def _fetch_and_extract_pdf(pdf_manifest_url: str, expr_graph: rdflib.Graph, cdm_ns: rdflib.Namespace) -> str:
     """Fetch PDF and extract text, wrapping it in minimal HTML.
 
@@ -77,14 +164,11 @@ def _fetch_and_extract_pdf(pdf_manifest_url: str, expr_graph: rdflib.Graph, cdm_
     pdf_item_url = str(items[0])
     logger.debug("Fetching PDF from: %s", pdf_item_url)
 
-    # Fetch the PDF (use wildcard Accept header as server is picky)
-    response = httpx.get(
+    # Fetch the PDF with retry logic (use wildcard Accept header as server is picky)
+    response = _http_get_with_retry(
         pdf_item_url,
         headers={"Accept": "*/*"},
-        follow_redirects=True,
-        timeout=DEFAULT_TIMEOUT,
     )
-    response.raise_for_status()
 
     # Extract text using PyMuPDF
     pdf_bytes = response.content
@@ -249,13 +333,10 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en", include_pdf: boo
         # Step 3: Fetch the content (XHTML preferred, PDF fallback)
         if xhtml_url:
             logger.debug("Fetching XHTML manifestation: %s", xhtml_url)
-            response = httpx.get(
+            response = _http_get_with_retry(
                 xhtml_url,
                 headers={"Accept": "application/xhtml+xml, text/html"},
-                follow_redirects=True,
-                timeout=DEFAULT_TIMEOUT,
             )
-            response.raise_for_status()
             html = response.text
             logger.info("Successfully fetched document via SPARQL fallback (%d bytes)", len(html))
             return html
@@ -280,7 +361,7 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en", include_pdf: boo
 
 
 # Base URLs for EUR-Lex resources
-# Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors
+# Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors ### I don't know wht they are talking about, works for me!
 # Using the direct EUR-Lex HTML endpoints instead
 EURLEX_HTML_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELEX:{celex_id}"
 EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELLAR:{cellar_id}"
@@ -288,6 +369,8 @@ EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?ur
 # Note: As of Oct 2023, OJ is published act-by-act instead of as collections
 # See: https://op.europa.eu/en/web/cellar/the-official-journal-act-by-act
 EURLEX_SPARQL_URL = "https://publications.europa.eu/webapi/rdf/sparql"
+# Cellar URL via uuid, note - there can be /DOC_1, or other suffixes after
+CELLAR_UUID_URL = "http://publications.europa.eu/resource/cellar/{cellar_id}"
 
 # Default headers for HTML requests - designed to avoid bot detection
 # These mimic a real browser to prevent AWS WAF blocking
@@ -326,6 +409,12 @@ DEFAULT_RAISE_ON_WAF = True
 # When True, attempts to fetch document metadata via SPARQL instead of raising
 DEFAULT_SPARQL_FALLBACK = True
 
+# Retry configuration for transient HTTP errors (500, 502, 503, 504)
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY = 2.0  # seconds
+DEFAULT_RETRY_BACKOFF = 2.0  # exponential backoff multiplier
+RETRYABLE_STATUS_CODES = {500, 502, 503, 504}
+
 
 @dataclass
 class ClientConfig:
@@ -351,6 +440,13 @@ class ClientConfig:
         If True, automatically fallback to SPARQL endpoint when WAF challenge is detected.
         Returns a minimal HTML representation of the document from SPARQL metadata.
         Requires `eurlxp[sparql]` dependencies. Default: False.
+    max_retries : int
+        Maximum number of retry attempts for transient HTTP errors (500, 502, 503, 504).
+        Default: 3.
+    retry_delay : float
+        Initial delay between retries in seconds (default: 2.0).
+    retry_backoff : float
+        Exponential backoff multiplier for retries (default: 2.0).
 
     Examples
     --------
@@ -359,6 +455,7 @@ class ClientConfig:
     >>> config = ClientConfig(headers={"X-Custom": "value"})  # Add custom headers
     >>> config = ClientConfig(raise_on_waf=False)  # Don't raise on WAF challenge
     >>> config = ClientConfig(sparql_fallback=True)  # Auto-fallback to SPARQL on WAF
+    >>> config = ClientConfig(max_retries=5, retry_delay=3.0)  # More retries
     """
 
     timeout: float = DEFAULT_TIMEOUT
@@ -368,6 +465,9 @@ class ClientConfig:
     referer: str | None = None
     raise_on_waf: bool = DEFAULT_RAISE_ON_WAF
     sparql_fallback: bool = DEFAULT_SPARQL_FALLBACK
+    max_retries: int = DEFAULT_MAX_RETRIES
+    retry_delay: float = DEFAULT_RETRY_DELAY
+    retry_backoff: float = DEFAULT_RETRY_BACKOFF
 
     def get_headers(self) -> dict[str, str]:
         """Build the final headers dict."""
@@ -472,6 +572,61 @@ class EURLexClient:
                 time.sleep(self._config.request_delay - elapsed)
         self._last_request_time = time.monotonic()
 
+    def _request_with_retry(self, url: str) -> httpx.Response:
+        """Make an HTTP GET request with retry logic for transient errors.
+
+        Parameters
+        ----------
+        url : str
+            The URL to fetch.
+
+        Returns
+        -------
+        httpx.Response
+            The HTTP response.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the request fails after all retries.
+        """
+        last_error: httpx.HTTPStatusError | None = None
+        current_delay = self._config.retry_delay
+
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                self._apply_rate_limit()
+                response = self._get_client().get(url)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code not in RETRYABLE_STATUS_CODES:
+                    raise
+
+                last_error = e
+                if attempt < self._config.max_retries:
+                    logger.warning(
+                        "HTTP %d error (attempt %d/%d): %s. Retrying in %.1fs...",
+                        e.response.status_code,
+                        attempt + 1,
+                        self._config.max_retries + 1,
+                        str(e)[:100],
+                        current_delay,
+                    )
+                    time.sleep(current_delay)
+                    current_delay *= self._config.retry_backoff
+                else:
+                    logger.error(
+                        "HTTP request failed after %d attempts: %s",
+                        self._config.max_retries + 1,
+                        e,
+                    )
+
+        # Should never reach here, but satisfy type checker
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unexpected retry loop exit")
+
     def close(self) -> None:
         """Close the HTTP client."""
         if self._client is not None:
@@ -510,12 +665,12 @@ class EURLexClient:
         ------
         WAFChallengeError
             If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
         """
-        self._apply_rate_limit()
         lang_code = language.upper()
         url = EURLEX_HTML_URL.format(lang=lang_code, celex_id=celex_id)
-        response = self._get_client().get(url)
-        response.raise_for_status()
+        response = self._request_with_retry(url)
         html = response.text
         if _is_waf_challenge(html):
             logger.warning("WAF challenge detected for CELEX ID: %s", celex_id)
@@ -548,18 +703,54 @@ class EURLexClient:
         ------
         WAFChallengeError
             If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
         """
-        self._apply_rate_limit()
         clean_id = cellar_id.split(":")[1] if ":" in cellar_id else cellar_id
         lang_code = language.upper()
         url = EURLEX_CELLAR_URL.format(lang=lang_code, cellar_id=clean_id)
-        response = self._get_client().get(url)
-        response.raise_for_status()
+        response = self._request_with_retry(url)
         html = response.text
         if _is_waf_challenge(html):
             logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
             # Note: SPARQL fallback for CELLAR IDs would need CELEX lookup first
             # For now, just raise the error with guidance
+            if self._config.raise_on_waf:
+                raise WAFChallengeError(
+                    f"EUR-Lex returned an AWS WAF challenge for CELLAR ID '{cellar_id}'. "
+                    "Try using SPARQL functions (get_documents, run_query) instead, "
+                    "or use get_html_by_celex_id with sparql_fallback=True."
+                )
+        return html
+
+    def get_html_by_cellar_url(self, cellar_url: str) -> str:
+        """Fetch HTML document by complete CELLAR URL.
+
+        Can handle URLs returned by the publications SPARQL API, including
+        those with suffixes like /DOC_1.
+
+        Parameters
+        ----------
+        cellar_url : str
+            Full cellar URL (e.g., http://publications.europa.eu/resource/cellar/{uuid}).
+
+        Returns
+        -------
+        str
+            The HTML content of the document.
+
+        Raises
+        ------
+        WAFChallengeError
+            If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
+        """
+        cellar_id = cellar_url.split("/")[5] if len(cellar_url.split("/")) > 5 else cellar_url
+        response = self._request_with_retry(cellar_url)
+        html = response.text
+        if _is_waf_challenge(html):
+            logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
             if self._config.raise_on_waf:
                 raise WAFChallengeError(
                     f"EUR-Lex returned an AWS WAF challenge for CELLAR ID '{cellar_id}'. "
@@ -633,6 +824,64 @@ class AsyncEURLexClient:
                 await asyncio.sleep(self._config.request_delay - elapsed)
         self._last_request_time = time.monotonic()
 
+    async def _request_with_retry(self, url: str) -> httpx.Response:
+        """Make an async HTTP GET request with retry logic for transient errors.
+
+        Parameters
+        ----------
+        url : str
+            The URL to fetch.
+
+        Returns
+        -------
+        httpx.Response
+            The HTTP response.
+
+        Raises
+        ------
+        httpx.HTTPStatusError
+            If the request fails after all retries.
+        """
+        import asyncio
+
+        last_error: httpx.HTTPStatusError | None = None
+        current_delay = self._config.retry_delay
+
+        for attempt in range(self._config.max_retries + 1):
+            try:
+                await self._apply_rate_limit()
+                client = await self._get_client()
+                response = await client.get(url)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code not in RETRYABLE_STATUS_CODES:
+                    raise
+
+                last_error = e
+                if attempt < self._config.max_retries:
+                    logger.warning(
+                        "HTTP %d error (attempt %d/%d): %s. Retrying in %.1fs...",
+                        e.response.status_code,
+                        attempt + 1,
+                        self._config.max_retries + 1,
+                        str(e)[:100],
+                        current_delay,
+                    )
+                    await asyncio.sleep(current_delay)
+                    current_delay *= self._config.retry_backoff
+                else:
+                    logger.error(
+                        "HTTP request failed after %d attempts: %s",
+                        self._config.max_retries + 1,
+                        e,
+                    )
+
+        # Should never reach here, but satisfy type checker
+        if last_error:
+            raise last_error
+        raise RuntimeError("Unexpected retry loop exit")
+
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._client is not None:
@@ -664,13 +913,12 @@ class AsyncEURLexClient:
         ------
         WAFChallengeError
             If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
         """
-        await self._apply_rate_limit()
         lang_code = language.upper()
         url = EURLEX_HTML_URL.format(lang=lang_code, celex_id=celex_id)
-        client = await self._get_client()
-        response = await client.get(url)
-        response.raise_for_status()
+        response = await self._request_with_retry(url)
         html = response.text
         if _is_waf_challenge(html):
             logger.warning("WAF challenge detected for CELEX ID: %s", celex_id)
@@ -703,14 +951,49 @@ class AsyncEURLexClient:
         ------
         WAFChallengeError
             If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
         """
-        await self._apply_rate_limit()
         clean_id = cellar_id.split(":")[1] if ":" in cellar_id else cellar_id
         lang_code = language.upper()
         url = EURLEX_CELLAR_URL.format(lang=lang_code, cellar_id=clean_id)
-        client = await self._get_client()
-        response = await client.get(url)
-        response.raise_for_status()
+        response = await self._request_with_retry(url)
+        html = response.text
+        if _is_waf_challenge(html):
+            logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
+            if self._config.raise_on_waf:
+                raise WAFChallengeError(
+                    f"EUR-Lex returned an AWS WAF challenge for CELLAR ID '{cellar_id}'. "
+                    "Try using SPARQL functions (get_documents, run_query) instead, "
+                    "or use get_html_by_celex_id with sparql_fallback=True."
+                )
+        return html
+
+    async def get_html_by_cellar_url(self, cellar_url: str) -> str:
+        """Fetch HTML document by complete CELLAR URL asynchronously.
+
+        Can handle URLs returned by the publications SPARQL API, including
+        those with suffixes like /DOC_1.
+
+        Parameters
+        ----------
+        cellar_url : str
+            Full cellar URL (e.g., http://publications.europa.eu/resource/cellar/{uuid}).
+
+        Returns
+        -------
+        str
+            The HTML content of the document.
+
+        Raises
+        ------
+        WAFChallengeError
+            If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        httpx.HTTPStatusError
+            If the request fails after all retries.
+        """
+        cellar_id = cellar_url.split("/")[5] if len(cellar_url.split("/")) > 5 else cellar_url
+        response = await self._request_with_retry(cellar_url)
         html = response.text
         if _is_waf_challenge(html):
             logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
@@ -752,6 +1035,23 @@ class AsyncEURLexClient:
 
         results = await asyncio.gather(*[fetch_one(cid) for cid in celex_ids])
         return {cid: html for cid, html in results if isinstance(html, str)}
+
+
+def get_html_by_cellar_url(cellar_url: str) -> str:
+    """Convenience function to fetch HTML by cellar URL.
+
+    Parameters
+    ----------
+    cellar_url : str
+        Full cellar URL (e.g., http://publications.europa.eu/resource/cellar/{uuid}).
+
+    Returns
+    -------
+    str
+        The HTML content of the document.
+    """
+    with EURLexClient() as client:
+        return client.get_html_by_cellar_url(cellar_url)
 
 
 def get_html_by_celex_id(celex_id: str, language: str = "en") -> str:
@@ -798,6 +1098,233 @@ def get_html_by_cellar_id(cellar_id: str, language: str = "en") -> str:
     """
     with EURLexClient() as client:
         return client.get_html_by_cellar_id(cellar_id, language)
+
+
+def _is_oj_reference(identifier: str) -> bool:
+    """Check if identifier is an Official Journal reference.
+
+    OJ references follow the pattern: [series]/[year]/[number]
+    Examples: C/2024/03709, L/2024/01234, CA/2024/00001
+    """
+    import re
+
+    # Pattern: one or more letters, slash, 4 digits (year), slash, digits (number)
+    pattern = r"^[A-Z]+/\d{4}/\d+$"
+    return bool(re.match(pattern, identifier))
+
+
+def detect_id_type(identifier: str) -> str:
+    """Detect the type of EUR-Lex document identifier.
+
+    Parameters
+    ----------
+    identifier : str
+        Any EUR-Lex document identifier.
+
+    Returns
+    -------
+    str
+        One of: "cellar_url", "celex", "cellar_id", "oj_reference", "unknown"
+
+    Examples
+    --------
+    >>> detect_id_type("http://publications.europa.eu/resource/cellar/abc123")
+    'cellar_url'
+    >>> detect_id_type("32019R0947")
+    'celex'
+    >>> detect_id_type("cellar:abc-123-def")
+    'cellar_id'
+    >>> detect_id_type("C/2026/00064")
+    'oj_reference'
+    """
+    # Import here to avoid circular imports
+    from eurlxp.parser import is_valid_celex_id
+
+    # Cellar URL (full URL)
+    if identifier.startswith("http://") or identifier.startswith("https://"):
+        if "cellar" in identifier or "publications.europa.eu" in identifier:
+            return "cellar_url"
+        return "unknown"
+
+    # Cellar ID (prefixed with cellar:)
+    if identifier.startswith("cellar:"):
+        return "cellar_id"
+
+    # Valid CELEX ID
+    if is_valid_celex_id(identifier):
+        return "celex"
+
+    # UUID-like string (cellar ID without prefix)
+    # UUIDs are 36 chars with dashes: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    if len(identifier) == 36 and identifier.count("-") == 4:
+        return "cellar_id"
+
+    # Official Journal reference (e.g., C/2024/03709, L/2024/01234)
+    if _is_oj_reference(identifier):
+        return "oj_reference"
+
+    return "unknown"
+
+
+def get_html(identifier: str, language: str = "en") -> str:
+    """Fetch HTML document by any identifier type.
+
+    This function auto-detects the identifier type and calls the appropriate
+    fetch function. It handles:
+    - CELEX IDs (e.g., "32019R0947")
+    - Cellar URLs (e.g., "http://publications.europa.eu/resource/cellar/...")
+    - Cellar IDs (e.g., "cellar:abc-123-def" or just "abc-123-def")
+    - Non-standard identifiers (e.g., OJ references "C/2026/00064") via SPARQL lookup
+
+    For unknown identifier types, the function will attempt to look up the
+    cellar URL via SPARQL and fetch using that.
+
+    Parameters
+    ----------
+    identifier : str
+        Any EUR-Lex document identifier.
+    language : str
+        Language code (default: "en"). Only used for CELEX and CELLAR ID lookups.
+
+    Returns
+    -------
+    str
+        The HTML content of the document.
+
+    Raises
+    ------
+    ValueError
+        If the identifier type cannot be determined and SPARQL lookup fails.
+    WAFChallengeError
+        If EUR-Lex returns a bot detection challenge.
+
+    Examples
+    --------
+    >>> # All of these work:
+    >>> html = get_html("32019R0947")  # CELEX ID  # doctest: +SKIP
+    >>> html = get_html("http://publications.europa.eu/resource/cellar/abc123")  # doctest: +SKIP
+    >>> html = get_html("cellar:abc-123-def")  # Cellar ID  # doctest: +SKIP
+    >>> html = get_html("C/2026/00064")  # OJ reference via SPARQL  # doctest: +SKIP
+    """
+    id_type = detect_id_type(identifier)
+
+    if id_type == "cellar_url":
+        return get_html_by_cellar_url(identifier)
+    elif id_type == "celex":
+        return get_html_by_celex_id(identifier, language)
+    elif id_type == "cellar_id":
+        return get_html_by_cellar_id(identifier, language)
+    elif id_type == "oj_reference":
+        # OJ references (e.g., C/2024/03709) - look up via SPARQL
+        from eurlxp.sparql import lookup_cellar_url
+
+        cellar_url = lookup_cellar_url(identifier)
+        if cellar_url:
+            return get_html_by_cellar_url(cellar_url)
+        raise ValueError(
+            f"OJ reference '{identifier}' not found via SPARQL lookup. "
+            "The document may not exist or may not be indexed yet."
+        )
+    else:
+        # Unknown identifier type - try SPARQL lookup as last resort
+        from eurlxp.sparql import lookup_cellar_url
+
+        cellar_url = lookup_cellar_url(identifier)
+        if cellar_url:
+            return get_html_by_cellar_url(cellar_url)
+        raise ValueError(
+            f"Cannot determine identifier type for '{identifier}' and SPARQL lookup found no results. "
+            "Ensure the identifier is valid or use get_html_by_cellar_url() directly."
+        )
+
+
+def fetch_documents(
+    identifiers: list[str],
+    language: str = "en",
+    on_error: str = "skip",
+) -> dict[str, str | Exception]:
+    """Fetch multiple documents by any identifier types.
+
+    This function auto-detects each identifier type and fetches the documents.
+    Handles mixed lists of CELEX IDs, cellar URLs, and cellar IDs.
+
+    Parameters
+    ----------
+    identifiers : list[str]
+        List of document identifiers (can be mixed types).
+    language : str
+        Language code (default: "en").
+    on_error : str
+        How to handle errors: "skip" (default), "raise", or "include".
+        - "skip": Skip failed documents, only return successful ones
+        - "raise": Raise exception on first error
+        - "include": Include Exception objects in results dict
+
+    Returns
+    -------
+    dict[str, str | Exception]
+        Mapping from identifier to HTML content (or Exception if on_error="include").
+
+    Examples
+    --------
+    >>> # Fetch a mix of identifier types
+    >>> docs = fetch_documents([
+    ...     "32019R0947",  # CELEX
+    ...     "http://publications.europa.eu/resource/cellar/abc123",  # URL
+    ... ])  # doctest: +SKIP
+    >>> len(docs)  # doctest: +SKIP
+    2
+
+    >>> # Use with get_ids_and_urls_via_date results
+    >>> from eurlxp import get_ids_and_urls_via_date, fetch_documents
+    >>> refs = get_ids_and_urls_via_date("2026-01-15")  # doctest: +SKIP
+    >>> urls = [ref.cellar_url for ref in refs]  # doctest: +SKIP
+    >>> docs = fetch_documents(urls)  # doctest: +SKIP
+    """
+    results: dict[str, str | Exception] = {}
+
+    with EURLexClient() as client:
+        for identifier in identifiers:
+            try:
+                id_type = detect_id_type(identifier)
+
+                if id_type == "cellar_url":
+                    html = client.get_html_by_cellar_url(identifier)
+                elif id_type == "celex":
+                    html = client.get_html_by_celex_id(identifier, language)
+                elif id_type == "cellar_id":
+                    html = client.get_html_by_cellar_id(identifier, language)
+                elif id_type == "oj_reference":
+                    # OJ references - look up via SPARQL
+                    from eurlxp.sparql import lookup_cellar_url
+
+                    cellar_url = lookup_cellar_url(identifier)
+                    if cellar_url:
+                        html = client.get_html_by_cellar_url(cellar_url)
+                    else:
+                        raise ValueError(f"OJ reference '{identifier}' not found via SPARQL lookup")
+                else:
+                    # Unknown identifier type - try SPARQL lookup as last resort
+                    from eurlxp.sparql import lookup_cellar_url
+
+                    cellar_url = lookup_cellar_url(identifier)
+                    if cellar_url:
+                        html = client.get_html_by_cellar_url(cellar_url)
+                    else:
+                        raise ValueError(
+                            f"Unknown identifier type for '{identifier}' and SPARQL lookup found no results"
+                        )
+
+                results[identifier] = html
+
+            except Exception as e:
+                if on_error == "raise":
+                    raise
+                elif on_error == "include":
+                    results[identifier] = e
+                # "skip" - just don't add to results
+
+    return results
 
 
 def prepend_prefixes(query: str) -> str:
