@@ -8,17 +8,42 @@ way to query EUR-Lex data as it doesn't trigger bot detection like HTML scraping
 """
 
 from __future__ import annotations
-from eurlxp.client import prepend_prefixes
+
 import logging
 import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING
 
 import pandas as pd
+
+from eurlxp.client import prepend_prefixes
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+class DateType(str, Enum):
+    """Date field to use when querying documents.
+
+    Attributes
+    ----------
+    DOCUMENT : str
+        The document publication date (cdm:work_date_document).
+        Use this for the original publication date of the document.
+    CREATED : str
+        The creation date in CELLAR (cdm:work_date_creation).
+    MODIFIED : str
+        The last modification date (cdm:work_date_lastUpdate).
+        Use this to find documents that have been updated/amended.
+    """
+
+    DOCUMENT = "document"
+    CREATED = "created"
+    MODIFIED = "modified"
+
 
 # Default retry configuration
 DEFAULT_MAX_RETRIES = 3
@@ -202,7 +227,7 @@ def guess_celex_ids_via_eurlex(
     >>> celex_ids = guess_celex_ids_via_eurlex("2019/947")  # doctest: +SKIP
     """
     from eurlxp.client import prepend_prefixes
-    from parser import get_possible_celex_ids
+    from eurlxp.parser import get_possible_celex_ids
 
     slash_notation = "/".join(slash_notation.split("/")[:2])
     possible_ids = get_possible_celex_ids(slash_notation, document_type, sector_id)
@@ -222,57 +247,188 @@ def guess_celex_ids_via_eurlex(
     return list(set(celex_ids))
 
 
+@dataclass
+class DocumentReference:
+    """A reference to a EUR-Lex document with both CELEX ID and cellar URL.
+
+    Attributes
+    ----------
+    cellar_url : str
+        The cellar URL (always available, always works for fetching).
+    celex_id : str | None
+        The CELEX ID if valid, None if the ID is not in standard CELEX format.
+    raw_id : str
+        The raw identifier from SPARQL (may be CELEX, OJ reference, or other format).
+    document_date : str
+        The document date in ISO format (YYYY-MM-DD).
+    """
+
+    cellar_url: str
+    celex_id: str | None
+    raw_id: str
+    document_date: str
+
 
 def get_ids_and_urls_via_date(
-    from_date: str, to_date: str| None = None
-):
-    """Gets a set of document with CELEX idts for a time dureation looking it up via EUR-Lex.
+    from_date: str,
+    to_date: str | None = None,
+    date_type: DateType | str = DateType.DOCUMENT,
+) -> list[DocumentReference]:
+    """Get document references for a date range via SPARQL.
+
+    This function queries the EUR-Lex SPARQL endpoint to find documents
+    published or modified within the specified date range. It returns
+    both the CELEX ID (when valid) and the cellar URL for each document.
+
+    The cellar URL is always usable for fetching, even when the CELEX ID
+    is non-standard (e.g., OJ references like C/2026/00064 or IDs with
+    revision suffixes like 32012L0029R(06)).
 
     Parameters
     ----------
     from_date : str
-        The from date with dash format (e.g. 2026-01-01).
-    document_type : str, optional
-        The to date with dash format (e.g. 2026-01-01). If empty, set at same date as from, giving entries for just that day.
-   
+        Start date in ISO format (e.g., "2026-01-01").
+    to_date : str, optional
+        End date in ISO format. If not provided, defaults to from_date
+        (single day query).
+    date_type : DateType | str, optional
+        Which date field to filter on. Options:
+        - DateType.DOCUMENT / "document": Publication date (default)
+        - DateType.MODIFIED / "modified": Last modification date
+        - DateType.CREATED / "created": Creation date in CELLAR
+
+        Use DateType.MODIFIED to find documents that have been updated,
+        regardless of their original publication year. This is useful for
+        catching amendments to old documents (e.g., a 2020 directive
+        amended in 2026 will be found when querying 2026 modifications).
+
     Returns
     -------
-    list[str] celex_ids_malformed
-        A list of existing CELEX IDs, some diverting from the standatised shape, due to edits, version, etc..
-    list[str] cellar_urls
-        A list of urls, pointing to the matching celex-id-ed document, indentified via matching url ( that done, via specificities of the underlining EUR Lex system, as of 2026)
-    """
-    from eurlxp.client import prepend_prefixes
+    list[DocumentReference]
+        List of document references, each containing:
+        - cellar_url: Always available, use with get_html_by_cellar_url()
+        - celex_id: Valid CELEX ID or None if format is non-standard
+        - raw_id: The original ID from the query (may differ from celex_id)
+        - document_date: The date matching the date_type filter
 
-    if to_date == None:
+    Examples
+    --------
+    >>> # Get documents published on a specific date
+    >>> docs = get_ids_and_urls_via_date("2026-01-15")  # doctest: +SKIP
+
+    >>> # Get documents modified in January 2026 (includes old docs with updates)
+    >>> docs = get_ids_and_urls_via_date(
+    ...     "2026-01-01", "2026-01-31", date_type=DateType.MODIFIED
+    ... )  # doctest: +SKIP
+
+    >>> # Process results
+    >>> for doc in docs:  # doctest: +SKIP
+    ...     html = get_html_by_cellar_url(doc.cellar_url)
+    """
+    from eurlxp.parser import is_valid_celex_id
+
+    if to_date is None:
         to_date = from_date
 
+    # Convert string to DateType if needed
+    if isinstance(date_type, str):
+        date_type = DateType(date_type)
+
+    # Map DateType to CDM predicate
+    date_predicates = {
+        DateType.DOCUMENT: "cdm:work_date_document",
+        DateType.CREATED: "cdm:work_date_creation",
+        DateType.MODIFIED: "cdm:work_date_lastUpdate",
+    }
+    date_predicate = date_predicates[date_type]
+
     query = f"""
-SELECT ?work (STRAFTER(STR(?celexUri), "celex:") AS ?celexId) ?celexUri ?documentDate
+SELECT ?work (STRAFTER(STR(?celexUri), "celex:") AS ?celexId) ?celexUri ?targetDate
 WHERE {{
-		?work a cdm:work ;
+    ?work a cdm:work ;
         cdm:work_id_document ?celexUri ;
-        cdm:work_date_document ?documentDate .
-  
-  FILTER(?documentDate >= "{from_date}"^^xsd:date && 
-         ?documentDate <= "{to_date}"^^xsd:date &&
-         regex(str(?celexUri), "celex"))
+        {date_predicate} ?targetDate .
+
+    FILTER(?targetDate >= "{from_date}"^^xsd:date &&
+           ?targetDate <= "{to_date}"^^xsd:date &&
+           regex(str(?celexUri), "celex"))
 }}
-ORDER BY DESC(?documentDate)"""
+ORDER BY DESC(?targetDate)"""
 
     query = prepend_prefixes(query)
     results = run_query(query.strip())
 
-    celex_ids_malformed: list[str]  = []
-    celler_uuid_urls: list[str]  = []
-    
-    for binding in results["results"]["bindings"]:
-        celex_id_maybe_malformed = binding["celexId"]["value"]
-        celex_ids_malformed.append(celex_id_maybe_malformed)
-        celler_url = binding["work"]["value"]
-        celler_uuid_urls.append(celler_url)
-    return celex_ids_malformed, celler_uuid_urls
+    documents: list[DocumentReference] = []
 
+    for binding in results["results"]["bindings"]:
+        raw_id = binding["celexId"]["value"]
+        cellar_url = binding["work"]["value"]
+        document_date = binding["targetDate"]["value"]
+
+        # Validate CELEX ID - set to None if not standard format
+        celex_id = raw_id if is_valid_celex_id(raw_id) else None
+
+        documents.append(
+            DocumentReference(
+                cellar_url=cellar_url,
+                celex_id=celex_id,
+                raw_id=raw_id,
+                document_date=document_date,
+            )
+        )
+
+    return documents
+
+
+def lookup_cellar_url(identifier: str) -> str | None:
+    """Look up the cellar URL for any EUR-Lex identifier via SPARQL.
+
+    This function queries the SPARQL endpoint to find the cellar URL
+    for any identifier, including OJ references (like C/2026/00064)
+    that are not valid CELEX IDs.
+
+    Parameters
+    ----------
+    identifier : str
+        Any EUR-Lex document identifier (CELEX ID, OJ reference, etc.).
+
+    Returns
+    -------
+    str | None
+        The cellar URL if found, None otherwise.
+
+    Examples
+    --------
+    >>> url = lookup_cellar_url("C/2026/00064")  # doctest: +SKIP
+    >>> url = lookup_cellar_url("32019R0947")  # doctest: +SKIP
+    """
+    # Query to find the work (cellar URL) for any identifier
+    # The identifier might be in cdm:work_id_document or cdm:resource_legal_id_celex
+    query = f"""
+SELECT DISTINCT ?work
+WHERE {{
+    {{
+        ?work cdm:work_id_document ?idUri .
+        FILTER(CONTAINS(STR(?idUri), "{identifier}"))
+    }}
+    UNION
+    {{
+        ?work cdm:resource_legal_id_celex "{identifier}" .
+    }}
+}}
+LIMIT 1"""
+
+    query = prepend_prefixes(query)
+
+    try:
+        results = run_query(query.strip())
+
+        if results["results"]["bindings"]:
+            return results["results"]["bindings"][0]["work"]["value"]
+    except Exception as e:
+        logger.warning(f"SPARQL lookup failed for '{identifier}': {e}")
+
+    return None
 
 
 def get_regulations(limit: int = -1, shuffle: bool = False) -> list[str]:

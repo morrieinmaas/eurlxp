@@ -3,7 +3,9 @@
 from eurlxp.parser import (
     get_celex_id,
     get_possible_celex_ids,
+    is_valid_celex_id,
     parse_article_paragraphs,
+    parse_celex_id,
     parse_html,
 )
 
@@ -99,3 +101,71 @@ class TestParseHtml:
         assert len(df) == 1
         assert df.iloc[0]["paragraph"] == "1"
         assert df.iloc[0]["text"] == "First paragraph"
+
+
+class TestParseCelexId:
+    """Tests for CELEX ID parsing and validation."""
+
+    def test_parse_standard_celex_id(self) -> None:
+        result = parse_celex_id("32019R0947")
+        assert result is not None
+        assert result["sector"] == "3"
+        assert result["year"] == "2019"
+        assert result["doc_type"] == "R"
+        assert result["number"] == "0947"
+        assert result["suffix"] is None
+
+    def test_parse_celex_id_with_suffix(self) -> None:
+        result = parse_celex_id("32012L0029R(06)")
+        assert result is not None
+        assert result["sector"] == "3"
+        assert result["year"] == "2012"
+        assert result["doc_type"] == "L"
+        assert result["number"] == "0029"
+        assert result["suffix"] == "R(06)"
+
+    def test_parse_celex_id_sector_5(self) -> None:
+        result = parse_celex_id("52026XG00745")
+        assert result is not None
+        assert result["sector"] == "5"
+        assert result["year"] == "2026"
+        assert result["doc_type"] == "XG"
+        assert result["number"] == "00745"
+
+    def test_parse_celex_id_budget_type(self) -> None:
+        result = parse_celex_id("32026B00249")
+        assert result is not None
+        assert result["sector"] == "3"
+        assert result["doc_type"] == "B"
+
+    def test_parse_oj_reference_returns_none(self) -> None:
+        """OJ series references like C/2026/00064 are not CELEX IDs."""
+        result = parse_celex_id("C/2026/00064")
+        assert result is None
+
+    def test_parse_empty_string_returns_none(self) -> None:
+        result = parse_celex_id("")
+        assert result is None
+
+    def test_parse_invalid_format_returns_none(self) -> None:
+        result = parse_celex_id("not-a-celex-id")
+        assert result is None
+
+    def test_parse_celex_id_invalid_year_returns_none(self) -> None:
+        result = parse_celex_id("31800R0001")  # Year too old
+        assert result is None
+
+
+class TestIsValidCelexId:
+    """Tests for CELEX ID validation."""
+
+    def test_valid_celex_ids(self) -> None:
+        assert is_valid_celex_id("32019R0947") is True
+        assert is_valid_celex_id("32012L0029R(06)") is True
+        assert is_valid_celex_id("52026XG00745") is True
+        assert is_valid_celex_id("32026B00249") is True
+
+    def test_invalid_celex_ids(self) -> None:
+        assert is_valid_celex_id("C/2026/00064") is False  # OJ reference
+        assert is_valid_celex_id("") is False
+        assert is_valid_celex_id("invalid") is False

@@ -200,6 +200,83 @@ except SPARQLServiceError as e:
 
 > **Note**: SPARQL functions require `pip install eurlxp[sparql]`
 
+### Fetching Documents by Date (Bulk Downloads)
+
+The most reliable way to bulk download EUR-Lex documents is to query by date range, which returns both the document IDs and direct cellar URLs:
+
+```python
+from eurlxp import get_ids_and_urls_via_date, get_html_by_cellar_url, parse_html, DateType
+
+# Get documents published on a specific date
+docs = get_ids_and_urls_via_date("2026-01-15")
+
+# Or find documents MODIFIED in a date range (catches updates to old documents)
+docs = get_ids_and_urls_via_date(
+    "2026-01-01", "2026-01-31",
+    date_type=DateType.MODIFIED
+)
+
+# Process each document
+for doc in docs:
+    print(f"ID: {doc.raw_id}")
+    print(f"Valid CELEX: {doc.celex_id}")  # None if format is non-standard
+    print(f"Cellar URL: {doc.cellar_url}")  # Always works for fetching
+
+    # Fetch using the cellar URL (always works)
+    html = get_html_by_cellar_url(doc.cellar_url)
+    df = parse_html(html)
+```
+
+**Date type options:**
+- `DateType.DOCUMENT` (default) - Publication date
+- `DateType.MODIFIED` - Last modification date (finds amendments to old documents)
+- `DateType.CREATED` - Creation date in CELLAR
+
+### Understanding Document Identifiers
+
+EUR-Lex uses several identifier formats. This package handles them all:
+
+| Format | Example | Description |
+|--------|---------|-------------|
+| **CELEX ID** | `32019R0947` | Standard format: `[sector][year][type][number]` |
+| **CELEX with suffix** | `32012L0029R(06)` | CELEX + revision indicator |
+| **Cellar URL** | `http://publications.europa.eu/resource/cellar/abc123` | Direct URL (always works) |
+| **Cellar ID** | `cellar:abc-123-def` or `abc-123-def` | UUID-based identifier |
+| **OJ Reference** | `C/2026/00064` | Official Journal reference (not a CELEX) |
+
+```python
+from eurlxp import detect_id_type, get_html, fetch_documents, parse_celex_id
+
+# Detect identifier type
+detect_id_type("32019R0947")  # Returns: "celex"
+detect_id_type("http://publications.europa.eu/resource/cellar/abc")  # Returns: "cellar_url"
+detect_id_type("C/2026/00064")  # Returns: "oj_reference"
+
+# Parse CELEX ID into components
+parse_celex_id("32019R0947")
+# Returns: {'sector': '3', 'year': '2019', 'doc_type': 'R', 'number': '0947', 'suffix': None}
+
+# Fetch a document by any identifier type (auto-detects)
+html = get_html("32019R0947")  # CELEX
+html = get_html("http://publications.europa.eu/resource/cellar/abc123")  # URL
+html = get_html("C/2026/00064")  # OJ reference - uses SPARQL to find cellar URL
+
+# Batch fetch documents with mixed identifier types
+results = fetch_documents([
+    "32019R0947",  # CELEX
+    "http://publications.europa.eu/resource/cellar/abc123",  # URL
+    "C/2026/00064",  # OJ reference - looked up via SPARQL
+])
+```
+
+**CELEX ID structure:**
+- **Sector** (1 char): `3` = legislation, `5` = preparatory docs, `6` = case law, etc.
+- **Year** (4 digits): Publication year
+- **Type** (1-3 chars): `R` = regulation, `L` = directive, `D` = decision, etc.
+- **Number** (2-5 digits): Document number
+
+See the [official EUR-Lex documentation](https://eur-lex.europa.eu/content/help/eurlex-content/celex-number.html) for complete details.
+
 ### CLI Usage
 
 ```bash
@@ -223,11 +300,19 @@ eurlxp celex 2019/947
 
 | Function | Description |
 |----------|-------------|
+| `get_html(identifier, language="en")` | Fetch HTML by any identifier (auto-detects type, uses SPARQL fallback) |
 | `get_html_by_celex_id(celex_id, language="en")` | Fetch HTML by CELEX ID |
 | `get_html_by_cellar_id(cellar_id, language="en")` | Fetch HTML by CELLAR ID |
+| `get_html_by_cellar_url(cellar_url)` | Fetch HTML by cellar URL |
+| `fetch_documents(identifiers, language="en", on_error="skip")` | Batch fetch documents (uses SPARQL fallback) |
+| `detect_id_type(identifier)` | Detect identifier type |
+| `lookup_cellar_url(identifier)` | Look up cellar URL for any identifier via SPARQL |
 | `parse_html(html)` | Parse HTML to DataFrame |
 | `get_celex_id(slash_notation, document_type="R", sector_id="3")` | Convert slash notation to CELEX ID |
 | `get_possible_celex_ids(slash_notation)` | Get all possible CELEX IDs |
+| `parse_celex_id(celex_id)` | Parse CELEX ID into components |
+| `is_valid_celex_id(celex_id)` | Check if string is valid CELEX format |
+| `get_ids_and_urls_via_date(from_date, to_date, date_type)` | Get document refs by date range |
 
 ### Classes
 
@@ -249,6 +334,9 @@ eurlxp celex 2019/947
 | `referer` | str | None | Optional referer header |
 | `raise_on_waf` | bool | True | Raise exception on WAF challenge |
 | `sparql_fallback` | bool | True | Auto-fallback to SPARQL when WAF blocks requests |
+| `max_retries` | int | 3 | Max retry attempts for transient HTTP errors (500/502/503/504) |
+| `retry_delay` | float | 2.0 | Initial delay between retries (seconds) |
+| `retry_backoff` | float | 2.0 | Exponential backoff multiplier |
 
 ### DataFrame Columns
 
@@ -272,27 +360,32 @@ git clone https://github.com/morrieinmaas/eurlxp.git
 cd eurlxp
 
 # Install with dev dependencies
-uv sync --all-extras
+just dev
 
 # Run tests
-uv run pytest
+just test-unit
 
-# Run linting
-uv run ruff check src tests
-uv run ruff format src tests
+# Run all checks (lint + type check)
+just check
 
-# Type checking
-uv run pyright
+# Format code
+just format
+
+# Run live tests with real documents (all ID formats)
+just test-live
+
+# See all available commands
+just --list
 ```
 
 ## Publishing to PyPI
 
 ```bash
 # Build the package
-uv build
+just build
 
 # Publish to PyPI (requires PYPI_TOKEN)
-uv publish --token $PYPI_TOKEN
+just publish
 ```
 
 ## License
