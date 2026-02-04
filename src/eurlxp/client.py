@@ -280,7 +280,7 @@ def _fetch_html_via_sparql(celex_id: str, language: str = "en", include_pdf: boo
 
 
 # Base URLs for EUR-Lex resources
-# Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors
+# Note: The old publications.europa.eu/resource/celex/ HTML endpoints return 400 errors ### I don't know wht they are talking about, works for me!
 # Using the direct EUR-Lex HTML endpoints instead
 EURLEX_HTML_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELEX:{celex_id}"
 EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?uri=CELLAR:{cellar_id}"
@@ -288,6 +288,8 @@ EURLEX_CELLAR_URL = "https://eur-lex.europa.eu/legal-content/{lang}/TXT/HTML/?ur
 # Note: As of Oct 2023, OJ is published act-by-act instead of as collections
 # See: https://op.europa.eu/en/web/cellar/the-official-journal-act-by-act
 EURLEX_SPARQL_URL = "https://publications.europa.eu/webapi/rdf/sparql"
+# Cellar URL via uuid, note - there can be /DOC_1, or other suffixes after
+CELLAR_UUID_URL = "http://publications.europa.eu/resource/cellar/{cellar_id}"
 
 # Default headers for HTML requests - designed to avoid bot detection
 # These mimic a real browser to prevent AWS WAF blocking
@@ -567,6 +569,41 @@ class EURLexClient:
                     "or use get_html_by_celex_id with sparql_fallback=True."
                 )
         return html
+    
+    def get_html_by_cellar_url(self, cellar_url: str) -> str:
+        """Fetch HTML document by complete CELLAR URL asynchronously.
+        Those are by default in English. Can handle abnotmal URLs uf yielded by the publications sparql API. 
+
+        Parameters
+        ----------
+        cellar_url : str
+            Full cellar URL, already prefixed  like CELLAR_UUID_URL
+
+        Returns
+        -------
+        str
+            The HTML content of the document.
+
+        Raises
+        ------
+        WAFChallengeError
+            If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        """
+        cellar_id = cellar_url.split("/")[5]
+        response = self._get_client().get(cellar_url)
+        response.raise_for_status()
+        html = response.text
+        if _is_waf_challenge(html):
+            logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
+            if self._config.raise_on_waf:
+                raise WAFChallengeError(
+                    f"EUR-Lex returned an AWS WAF challenge for CELLAR ID '{cellar_id}'. "
+                    "Try using SPARQL functions (get_documents, run_query) instead, "
+                    "or use get_html_by_celex_id with sparql_fallback=True."
+                )
+        return html
+
+
 
 
 class AsyncEURLexClient:
@@ -722,6 +759,42 @@ class AsyncEURLexClient:
                 )
         return html
 
+    async def get_html_by_cellar_url(self, cellar_url: str) -> str:
+        """Fetch HTML document by complete CELLAR URL asynchronously.
+        Those are by default in English. Can handle abnotmal URLs uf yielded by the publications sparql API. 
+
+        Parameters
+        ----------
+        cellar_url : str
+            Full cellar URL, already prefixed  like CELLAR_UUID_URL
+
+        Returns
+        -------
+        str
+            The HTML content of the document.
+
+        Raises
+        ------
+        WAFChallengeError
+            If EUR-Lex returns a bot detection challenge (when raise_on_waf=True).
+        """
+        cellar_id = cellar_url.split("/")[5]
+        await self._apply_rate_limit()
+        client = await self._get_client()
+        response = await client.get(cellar_url)
+        response.raise_for_status()
+        html = response.text
+        if _is_waf_challenge(html):
+            logger.warning("WAF challenge detected for CELLAR ID: %s", cellar_id)
+            if self._config.raise_on_waf:
+                raise WAFChallengeError(
+                    f"EUR-Lex returned an AWS WAF challenge for CELLAR ID '{cellar_id}'. "
+                    "Try using SPARQL functions (get_documents, run_query) instead, "
+                    "or use get_html_by_celex_id with sparql_fallback=True."
+                )
+        return html
+
+
     async def fetch_multiple(
         self,
         celex_ids: list[str],
@@ -753,6 +826,13 @@ class AsyncEURLexClient:
         results = await asyncio.gather(*[fetch_one(cid) for cid in celex_ids])
         return {cid: html for cid, html in results if isinstance(html, str)}
 
+
+def get_html_by_cellar_url(self, cellar_url: str) -> str:
+    """Convinience function to fetch HTML by ready made cellar url, 
+        see details in EURLexClient.get_html_by_cellar_url"""
+    
+    with EURLexClient() as client:
+        return client.get_html_by_cellar_url(cellar_url)
 
 def get_html_by_celex_id(celex_id: str, language: str = "en") -> str:
     """Convenience function to fetch HTML by CELEX ID.
