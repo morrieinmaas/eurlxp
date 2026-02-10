@@ -102,6 +102,64 @@ class TestParseHtml:
         assert df.iloc[0]["paragraph"] == "1"
         assert df.iloc[0]["text"] == "First paragraph"
 
+    def test_parse_metadata_propagation_per_article(self) -> None:
+        """Regression: article/group/section must reflect position, not final values."""
+        html = """<html><body>
+            <p class="doc-ti">TEST REGULATION</p>
+            <p class="ti-section-1">GENERAL PROVISIONS</p>
+            <p class="ti-grseq-1">Chapter I Scope</p>
+            <p class="ti-art">Article 1</p>
+            <p class="normal">(1) First article first paragraph.</p>
+            <p class="normal">(2) First article second paragraph.</p>
+            <p class="ti-art">Article 2</p>
+            <p class="normal">(1) Second article first paragraph.</p>
+            <p class="ti-section-2">FINAL PROVISIONS</p>
+            <p class="ti-grseq-2">Chapter II Entry into force</p>
+            <p class="ti-art">Article 3</p>
+            <p class="normal">(1) Third article first paragraph.</p>
+        </body></html>"""
+        df = parse_html(html)
+        assert len(df) == 4
+
+        # Article 1 rows
+        assert df.iloc[0]["article"] == "1"
+        assert df.iloc[0]["section"] == "GENERAL PROVISIONS"
+        assert df.iloc[0]["group"] == "Chapter I Scope"
+        assert df.iloc[0]["paragraph"] == "1"
+        assert df.iloc[1]["article"] == "1"
+        assert df.iloc[1]["paragraph"] == "2"
+
+        # Article 2 row
+        assert df.iloc[2]["article"] == "2"
+        assert df.iloc[2]["section"] == "GENERAL PROVISIONS"
+        assert df.iloc[2]["group"] == "Chapter I Scope"
+        assert df.iloc[2]["paragraph"] == "1"
+
+        # Article 3 row (different section and group)
+        assert df.iloc[3]["article"] == "3"
+        assert df.iloc[3]["section"] == "FINAL PROVISIONS"
+        assert df.iloc[3]["group"] == "Chapter II Entry into force"
+        assert df.iloc[3]["paragraph"] == "1"
+
+    def test_preamble_has_no_article(self) -> None:
+        """Preamble text before any article should not have article metadata."""
+        html = """<html><body>
+            <p class="doc-ti">TEST REGULATION</p>
+            <p class="normal">THE EUROPEAN PARLIAMENT AND THE COUNCIL,</p>
+            <p class="normal">Having regard to the Treaty,</p>
+            <p class="ti-art">Article 1</p>
+            <p class="normal">(1) Article content.</p>
+        </body></html>"""
+        df = parse_html(html)
+        assert len(df) == 3
+
+        # Preamble rows should have no article
+        assert df.iloc[0]["article"] is None
+        assert df.iloc[1]["article"] is None
+
+        # Article 1 row should have article
+        assert df.iloc[2]["article"] == "1"
+
 
 class TestParseCelexId:
     """Tests for CELEX ID parsing and validation."""

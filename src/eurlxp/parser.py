@@ -205,6 +205,9 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
 
     Tries lxml-xml parser first (for XHTML documents), then falls back to
     lxml HTML parser for older HTML documents.
+
+    Processes all <p> tags in a single pass in document order so that
+    article, group, and section context updates apply only to subsequent rows.
     """
     from bs4 import BeautifulSoup
 
@@ -218,55 +221,47 @@ def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
     results: list[ParseResult] = []
     context = ParseContext()
 
-    # Find document title
-    # Supports: OJ format (doc-ti, oj-doc-ti), Commission format (Titreobjet, Typedudocument)
-    for doc_ti in soup.find_all("p", class_=["doc-ti", "oj-doc-ti", "Titreobjet", "Typedudocument"]):
-        text = doc_ti.get_text(strip=True)
-        if text:
+    doc_title_classes = {"doc-ti", "oj-doc-ti", "Titreobjet", "Typedudocument"}
+    article_title_classes = {"ti-art", "oj-ti-art", "Titrearticle"}
+    text_classes = {"normal", "oj-normal", "Normal"}
+
+    # Single pass through all <p> tags in document order
+    for p_tag in soup.find_all("p"):
+        css_classes = p_tag.get("class") or []
+        if isinstance(css_classes, str):
+            css_classes = [css_classes]
+        css_class_str = " ".join(css_classes)
+        css_class_set = set(css_classes)
+
+        text = p_tag.get_text(strip=True)
+        if not text:
+            continue
+
+        # Document title
+        if css_class_set & doc_title_classes:
             if context.document is None:
                 context.document = ""
             context.document += text
             results.append(ParseResult(text=text, item_type="doc-title", ref=[], context=context.copy()))
 
-    # Find article titles
-    # Supports: OJ format (ti-art, oj-ti-art), Commission format (Titrearticle)
-    for ti_art in soup.find_all("p", class_=["ti-art", "oj-ti-art", "Titrearticle"]):
-        text = ti_art.get_text(strip=True)
-        if text:
+        # Article title
+        elif css_class_set & article_title_classes:
             context.article = text.replace("Article", "").strip()
+            context.paragraph = None
             results.append(ParseResult(text=text, item_type="art-title", ref=[], context=context.copy()))
 
-    # Find group titles (ti-grseq-* classes)
-    for p_tag in soup.find_all("p"):
-        css_class = p_tag.get("class")
-        if css_class is None:
-            css_class = ""
-        elif isinstance(css_class, list):
-            css_class = " ".join(css_class)
-        if css_class and ("ti-grseq-" in css_class or "oj-ti-grseq-" in css_class):
-            text = p_tag.get_text(strip=True)
-            if text:
-                context.group = text
-                results.append(ParseResult(text=text, item_type="group-title", ref=[], context=context.copy()))
+        # Group title (ti-grseq-* or oj-ti-grseq-* classes)
+        elif "ti-grseq-" in css_class_str or "oj-ti-grseq-" in css_class_str:
+            context.group = text
+            results.append(ParseResult(text=text, item_type="group-title", ref=[], context=context.copy()))
 
-    # Find section titles (ti-section-* classes)
-    for p_tag in soup.find_all("p"):
-        css_class = p_tag.get("class")
-        if css_class is None:
-            css_class = ""
-        elif isinstance(css_class, list):
-            css_class = " ".join(css_class)
-        if css_class and ("ti-section-" in css_class or "oj-ti-section-" in css_class):
-            text = p_tag.get_text(strip=True)
-            if text:
-                context.section = text
-                results.append(ParseResult(text=text, item_type="section-title", ref=[], context=context.copy()))
+        # Section title (ti-section-* or oj-ti-section-* classes)
+        elif "ti-section-" in css_class_str or "oj-ti-section-" in css_class_str:
+            context.section = text
+            results.append(ParseResult(text=text, item_type="section-title", ref=[], context=context.copy()))
 
-    # Find normal text paragraphs
-    # Supports: OJ format (normal, oj-normal), Commission format (Normal - capital N)
-    for normal in soup.find_all("p", class_=["normal", "oj-normal", "Normal"]):
-        text = normal.get_text(strip=True)
-        if text:
+        # Normal text paragraphs
+        elif css_class_set & text_classes:
             # Check for numbered paragraphs
             match = re.match(r"^[(]?([0-9]+)[).]?", text)
             if match:
