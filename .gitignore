@@ -172,3 +172,6 @@ cython_debug/
 # Output data
 *.json
 *.html
+
+# Allow test fixtures
+!tests/fixtures/*.html
