@@ -1,6 +1,6 @@
 [project]
 name = "eurlxp"
-version = "0.4.1"
+version = "0.5.0"
 description = "A modern EUR-Lex parser for Python - fetch and parse EU legal documents"
 readme = "README.md"
 license = { text = "MIT" }
@@ -48,6 +48,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
     "pytest-asyncio>=0.23.0",
+    "syrupy>=5.1.0",
     "ruff>=0.4.0",
     "pyright>=1.1.0",
     "pre-commit>=3.0.0",

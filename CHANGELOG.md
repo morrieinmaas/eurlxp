@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-13
+
+### Added
+
+- **Snapshot testing** - Added snapshot tests using syrupy for real EUR-Lex documents (Cyber Resilience Act and AI Act), catching parser regressions against full document output
+- **HTML fixtures** - Stored real EUR-Lex HTML for CRA (32024R2847) and AI Act (32024R1689) as test fixtures
+- **syrupy** dev dependency for snapshot assertion support
+
 ## [0.4.1] - 2026-02-10
 
 ### Fixed
