@@ -24,7 +24,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: just dev
+        run: uv sync --all-extras --python 3.12
 
       - name: Run linting
         run: just lint
