@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-03-16
+
+### Fixed
+
+- **pymupdf Databricks compatibility** - Pin `pymupdf<=1.24.10` on Python 3.11 to avoid cp38-abi3 wheels (introduced in 1.24.11) that fail on Databricks Runtime 15.4. Python 3.12+ continues to use the latest pymupdf release.
+
+## [0.5.0] - 2026-03-16
+
+### Added
+
+- **Unified fetch API** - New `fetch()` function with retry logic and OJ reference detection
+- **Date-based batch querying** - `get_ids_and_urls_via_date()` supports fetching document references by date range
+
 ## [0.4.1] - 2026-02-10
 
 ### Fixed
