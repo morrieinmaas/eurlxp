@@ -57,8 +57,8 @@ class TestParseHtml:
         html = '<html><body><p class="normal">Text</p></body></html>'
         df = parse_html(html)
         assert len(df) == 1
-        assert df.iloc[0]["text"] == "Text"
-        assert df.iloc[0]["type"] == "text"
+        assert df[0, "text"] == "Text"
+        assert df[0, "type"] == "text"
 
     def test_parse_invalid_html(self) -> None:
         df = parse_html("<html")
@@ -75,7 +75,7 @@ class TestParseHtml:
         </body></html>"""
         df = parse_html(html)
         assert len(df) == 1
-        assert df.iloc[0]["document"] == "REGULATION"
+        assert df[0, "document"] == "REGULATION"
 
     def test_parse_with_article(self) -> None:
         html = """<html><body>
@@ -84,7 +84,7 @@ class TestParseHtml:
         </body></html>"""
         df = parse_html(html)
         assert len(df) == 1
-        assert df.iloc[0]["article"] == "1"
+        assert df[0, "article"] == "1"
 
     def test_parse_with_group(self) -> None:
         html = """<html><body>
@@ -93,14 +93,14 @@ class TestParseHtml:
         </body></html>"""
         df = parse_html(html)
         assert len(df) == 1
-        assert df.iloc[0]["group"] == "Group Title"
+        assert df[0, "group"] == "Group Title"
 
     def test_parse_numbered_paragraph(self) -> None:
         html = '<html><body><p class="normal">1. First paragraph</p></body></html>'
         df = parse_html(html)
         assert len(df) == 1
-        assert df.iloc[0]["paragraph"] == "1"
-        assert df.iloc[0]["text"] == "First paragraph"
+        assert df[0, "paragraph"] == "1"
+        assert df[0, "text"] == "First paragraph"
 
     def test_parse_metadata_propagation_per_article(self) -> None:
         """Regression: article/group/section must reflect position, not final values."""
@@ -122,24 +122,24 @@ class TestParseHtml:
         assert len(df) == 4
 
         # Article 1 rows
-        assert df.iloc[0]["article"] == "1"
-        assert df.iloc[0]["section"] == "GENERAL PROVISIONS"
-        assert df.iloc[0]["group"] == "Chapter I Scope"
-        assert df.iloc[0]["paragraph"] == "1"
-        assert df.iloc[1]["article"] == "1"
-        assert df.iloc[1]["paragraph"] == "2"
+        assert df[0, "article"] == "1"
+        assert df[0, "section"] == "GENERAL PROVISIONS"
+        assert df[0, "group"] == "Chapter I Scope"
+        assert df[0, "paragraph"] == "1"
+        assert df[1, "article"] == "1"
+        assert df[1, "paragraph"] == "2"
 
         # Article 2 row
-        assert df.iloc[2]["article"] == "2"
-        assert df.iloc[2]["section"] == "GENERAL PROVISIONS"
-        assert df.iloc[2]["group"] == "Chapter I Scope"
-        assert df.iloc[2]["paragraph"] == "1"
+        assert df[2, "article"] == "2"
+        assert df[2, "section"] == "GENERAL PROVISIONS"
+        assert df[2, "group"] == "Chapter I Scope"
+        assert df[2, "paragraph"] == "1"
 
         # Article 3 row (different section and group)
-        assert df.iloc[3]["article"] == "3"
-        assert df.iloc[3]["section"] == "FINAL PROVISIONS"
-        assert df.iloc[3]["group"] == "Chapter II Entry into force"
-        assert df.iloc[3]["paragraph"] == "1"
+        assert df[3, "article"] == "3"
+        assert df[3, "section"] == "FINAL PROVISIONS"
+        assert df[3, "group"] == "Chapter II Entry into force"
+        assert df[3, "paragraph"] == "1"
 
     def test_preamble_has_no_article(self) -> None:
         """Preamble text before any article should not have article metadata."""
@@ -154,11 +154,11 @@ class TestParseHtml:
         assert len(df) == 3
 
         # Preamble rows should have no article
-        assert df.iloc[0]["article"] is None
-        assert df.iloc[1]["article"] is None
+        assert df[0, "article"] is None
+        assert df[1, "article"] is None
 
         # Article 1 row should have article
-        assert df.iloc[2]["article"] == "1"
+        assert df[2, "article"] == "1"
 
 
 class TestParseCelexId:

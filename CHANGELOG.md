@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-16
+
+### Changed
+
+- **Polars replaces pandas** — `parse_html`, `process_paragraphs`, `convert_sparql_output_to_dataframe`, and `get_celex_dataframe` now return `polars.DataFrame` instead of `pandas.DataFrame`. Polars is significantly faster, has a cleaner API, and uses `None` (not `NaN`) for null values. Update call sites: `df.empty` → `df.is_empty()`, `df.iloc[n]["col"]` → `df[n, "col"]`, `df.to_csv(index=False)` → `df.write_csv()`, `df.to_json(orient="records")` → `json.dumps(df.to_dicts())`.
+- **pymupdf pin for Python <3.12** — `pymupdf` is now capped at `<=1.24.10` for Python <3.12 to avoid cp38-abi3 wheels that fail on Databricks Runtime 15.4. Python 3.12+ is unbounded.
+
 ## [0.5.1] - 2026-03-16
 
 ### Fixed

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
-import pandas as pd
+import polars as pl
 
 from eurlxp.client import prepend_prefixes
 
@@ -149,7 +149,7 @@ def run_query(
     )
 
 
-def convert_sparql_output_to_dataframe(sparql_results: dict) -> pd.DataFrame:
+def convert_sparql_output_to_dataframe(sparql_results: dict) -> pl.DataFrame:
     """Convert SPARQL output to a DataFrame.
 
     Parameters
@@ -159,21 +159,21 @@ def convert_sparql_output_to_dataframe(sparql_results: dict) -> pd.DataFrame:
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         The DataFrame representation of the SPARQL results.
 
     Examples
     --------
-    >>> convert_sparql_output_to_dataframe({'results': {'bindings': [{'subject': {'value': 'cdm:test'}}]}}).to_dict()
-    {'subject': {0: 'cdm:test'}}
+    >>> convert_sparql_output_to_dataframe({'results': {'bindings': [{'subject': {'value': 'cdm:test'}}]}}).to_dicts()
+    [{'subject': 'cdm:test'}]
     """
     from eurlxp.client import simplify_iri
 
     items = [{key: simplify_iri(item[key]["value"]) for key in item} for item in sparql_results["results"]["bindings"]]
-    return pd.DataFrame(items)
+    return pl.DataFrame(items) if items else pl.DataFrame()
 
 
-def get_celex_dataframe(celex_id: str) -> pd.DataFrame:
+def get_celex_dataframe(celex_id: str) -> pl.DataFrame:
     """Get CELEX data delivered in a DataFrame.
 
     Parameters
@@ -183,7 +183,7 @@ def get_celex_dataframe(celex_id: str) -> pd.DataFrame:
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         A DataFrame containing the results with columns 's', 'o', 'p'.
     """
     _check_sparql_dependencies()
@@ -194,11 +194,11 @@ def get_celex_dataframe(celex_id: str) -> pd.DataFrame:
     graph = rdflib.Graph()
     graph.parse(f"http://publications.europa.eu/resource/celex/{celex_id}?language=eng")
 
-    items = [{key: simplify_iri(str(item[key])) for key in range(len(item))} for item in graph]
-    df = pd.DataFrame(items)
-    if len(df.columns) >= 3:
-        df.columns = ["s", "o", "p"]  # type: ignore[assignment]
-    return df
+    items = [
+        {"s": simplify_iri(str(item[0])), "o": simplify_iri(str(item[1])), "p": simplify_iri(str(item[2]))}
+        for item in graph
+    ]
+    return pl.DataFrame(items) if items else pl.DataFrame(schema={"s": pl.String, "o": pl.String, "p": pl.String})
 
 
 def guess_celex_ids_via_eurlex(

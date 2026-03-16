@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -41,13 +42,11 @@ def fetch(
         content = html
     elif format in ("csv", "json"):
         df = parse_html(html)
-        if df.empty:
+        if df.is_empty():
             console.print("[yellow]Warning: No content parsed from document[/yellow]")
             content = "" if format == "csv" else "[]"
         else:
-            csv_content = df.to_csv(index=False)
-            json_content = df.to_json(orient="records", indent=2)
-            content = csv_content if format == "csv" else (json_content or "[]")
+            content = df.write_csv() if format == "csv" else json.dumps(df.to_dicts(), indent=2)
     else:
         console.print(f"[red]Unknown format: {format}[/red]")
         raise typer.Exit(1)
@@ -75,15 +74,15 @@ def parse(
     html = input_file.read_text()
     df = parse_html(html)
 
-    if df.empty:
+    if df.is_empty():
         console.print("[yellow]Warning: No content parsed from document[/yellow]")
         raise typer.Exit(0)
 
     content: str
     if format == "csv":
-        content = df.to_csv(index=False) or ""
+        content = df.write_csv()
     elif format == "json":
-        content = df.to_json(orient="records", indent=2) or "[]"
+        content = json.dumps(df.to_dicts(), indent=2)
     else:
         console.print(f"[red]Unknown format: {format}[/red]")
         raise typer.Exit(1)
@@ -122,14 +121,13 @@ def info(
     table.add_row("Total rows", str(len(df)))
 
     if "article" in df.columns:
-        article_col = df["article"]
-        unique_articles: int = article_col[article_col.notna()].nunique()  # type: ignore[assignment]
+        unique_articles = df["article"].drop_nulls().n_unique()
         table.add_row("Unique articles", str(unique_articles))
 
     if "document" in df.columns:
-        doc_col = df["document"].dropna()
+        doc_col = df["document"].drop_nulls()
         if len(doc_col) > 0:
-            doc_title = str(doc_col.iloc[0])[:80]
+            doc_title = str(doc_col[0])[:80]
             table.add_row("Document title", doc_title)
 
     console.print(table)

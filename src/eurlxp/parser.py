@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-import pandas as pd
+import polars as pl
 
 from eurlxp.models import ParseContext, ParseResult
 
@@ -164,8 +164,8 @@ def _parse_article(
     return results
 
 
-def parse_html(html: str) -> pd.DataFrame:
-    """Parse EUR-Lex HTML into a pandas DataFrame.
+def parse_html(html: str) -> pl.DataFrame:
+    """Parse EUR-Lex HTML into a Polars DataFrame.
 
     Parameters
     ----------
@@ -174,15 +174,15 @@ def parse_html(html: str) -> pd.DataFrame:
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         DataFrame with columns: text, type, ref, and context fields
         (document, article, article_subtitle, paragraph, group, section).
 
     Examples
     --------
-    >>> parse_html('<html><body><p class="normal">Text</p></body></html>').to_dict(orient='records')
+    >>> parse_html('<html><body><p class="normal">Text</p></body></html>').to_dicts()
     [{'text': 'Text', 'type': 'text', 'ref': [], ...}]
-    >>> parse_html('<html').to_dict(orient='records')
+    >>> parse_html('<html').to_dicts()
     []
     """
     # Use BeautifulSoup for robust parsing of all EUR-Lex formats
@@ -191,13 +191,16 @@ def parse_html(html: str) -> pd.DataFrame:
 
     records = [r.to_dict() for r in results]
 
-    df = pd.DataFrame.from_records(records) if records else pd.DataFrame()
+    if not records:
+        return pl.DataFrame()
+
+    df = pl.DataFrame(records)
 
     # Filter to only text items (matching original behavior)
     if "type" in df.columns:
-        df = df[df["type"] == "text"].copy()
+        df = df.filter(pl.col("type") == "text")
 
-    return df  # type: ignore[return-value]
+    return df
 
 
 def _parse_html_with_beautifulsoup(html: str) -> list[ParseResult]:
@@ -497,7 +500,7 @@ def get_possible_celex_ids(
     return [get_celex_id(slash_notation, dt, sid) for sid in sector_ids for dt in document_types]
 
 
-def process_paragraphs(paragraphs: list[dict]) -> pd.DataFrame:
+def process_paragraphs(paragraphs: list[dict]) -> pl.DataFrame:
     """Process and filter paragraphs, removing boilerplate text.
 
     Parameters
@@ -507,27 +510,32 @@ def process_paragraphs(paragraphs: list[dict]) -> pd.DataFrame:
 
     Returns
     -------
-    pd.DataFrame
+    pl.DataFrame
         Filtered DataFrame of paragraphs.
 
     Examples
     --------
-    >>> process_paragraphs([]).to_dict(orient='records')
+    >>> process_paragraphs([]).to_dicts()
     []
-    >>> process_paragraphs([{'celex_id': '1', 'paragraph': 'Done at 2021-11-25.'}]).to_dict(orient='records')
+    >>> process_paragraphs([{'celex_id': '1', 'paragraph': 'Done at 2021-11-25.'}]).to_dicts()
     []
     """
-    df: pd.DataFrame = pd.DataFrame.from_records(paragraphs)
+    if not paragraphs:
+        return pl.DataFrame()
+
+    df = pl.DataFrame(paragraphs)
 
     if "paragraph" not in df.columns or len(df) == 0:
         return df
 
-    para_col: pd.Series[str] = df["paragraph"]  # type: ignore[assignment]
+    # Exclusion filters
+    for pattern in ["Done at", "It shall apply from"]:
+        df = df.filter(~pl.col("paragraph").str.starts_with(pattern))
 
-    # Filter patterns to exclude
-    exclusion_starts = ["Done at", "It shall apply from"]
-    exclusion_contains = ["is replaced by", "is amended ", "is repealed with", "'", "'"]
-    exclusion_ends = [
+    for pattern in ["is replaced by", "is amended ", "is repealed with", "\u2018", "\u2019"]:
+        df = df.filter(~pl.col("paragraph").str.contains(pattern, literal=True))
+
+    for pattern in [
         "is updated.",
         "is deleted.",
         "is removed.",
@@ -535,39 +543,13 @@ def process_paragraphs(paragraphs: list[dict]) -> pd.DataFrame:
         "are updated.",
         "are deleted.",
         "are removed.",
-    ]
-
-    for pattern in exclusion_starts:
-        if len(df) > 0:
-            mask = para_col.str.startswith(pattern)
-            df = df[~mask].copy()  # type: ignore[assignment]
-            para_col = df["paragraph"]  # type: ignore[assignment]
-
-    for pattern in exclusion_contains:
-        if len(df) > 0:
-            mask = para_col.str.contains(pattern, regex=False)
-            df = df[~mask].copy()  # type: ignore[assignment]
-            para_col = df["paragraph"]  # type: ignore[assignment]
-
-    for pattern in exclusion_ends:
-        if len(df) > 0:
-            mask = para_col.str.endswith(pattern)
-            df = df[~mask].copy()  # type: ignore[assignment]
-            para_col = df["paragraph"]  # type: ignore[assignment]
+    ]:
+        df = df.filter(~pl.col("paragraph").str.ends_with(pattern))
 
     # Inclusion filters
-    if len(df) > 0:
-        mask = para_col.str.endswith(".")
-        df = df[mask].copy()  # type: ignore[assignment]
-        para_col = df["paragraph"]  # type: ignore[assignment]
-    if len(df) > 0:
-        mask = para_col.apply(lambda t: len(t) > 0 and t[0].isupper())
-        df = df[mask].copy()  # type: ignore[assignment]
-        para_col = df["paragraph"]  # type: ignore[assignment]
-    if len(df) > 0:
-        mask = para_col.str.len() >= 100
-        df = df[mask].copy()  # type: ignore[assignment]
-    if len(df) > 0:
-        df = df.drop_duplicates(subset="paragraph")
+    df = df.filter(pl.col("paragraph").str.ends_with("."))
+    df = df.filter(pl.col("paragraph").map_elements(lambda t: len(t) > 0 and t[0].isupper(), return_dtype=pl.Boolean))
+    df = df.filter(pl.col("paragraph").str.len_chars() >= 100)
+    df = df.unique(subset=["paragraph"])
 
     return df

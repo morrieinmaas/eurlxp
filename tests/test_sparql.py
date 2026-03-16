@@ -40,7 +40,7 @@ class TestConvertSparqlOutputToDataframe:
             "results": {"bindings": [{"subject": {"value": "http://publications.europa.eu/ontology/cdm#test"}}]}
         }
         df = convert_sparql_output_to_dataframe(sparql_results)
-        assert df.iloc[0]["subject"] == "cdm:test"
+        assert df[0, "subject"] == "cdm:test"
 
 
 class TestRunQuery:
